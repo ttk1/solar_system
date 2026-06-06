@@ -32,7 +32,7 @@
 </style>
 </head>
 <body>
-<div id="badge">Renderer: 自前 WebGPU (WGSL) / Physics: CPU</div>
+<div id="badge">Renderer: 自前 WebGPU (WGSL) ／ テクスチャ・環・ラベル対応 ／ Physics: CPU</div>
 <div id="ui">
   <div id="date">----</div>
   <div class="small" id="elapsed"></div>
@@ -100,6 +100,10 @@ function mat4LookAt(eye, center, up){
 }
 function mat4Translate(t){ const o=mat4Identity(); o[12]=t[0]; o[13]=t[1]; o[14]=t[2]; return o; }
 function mat4Scale(s){ const o=mat4Identity(); o[0]=s; o[5]=s; o[10]=s; return o; }
+function mat4RotX(a){ const o=mat4Identity(); const c=Math.cos(a),s=Math.sin(a);
+  o[5]=c; o[6]=s; o[9]=-s; o[10]=c; return o; }
+function mat4RotZ(a){ const o=mat4Identity(); const c=Math.cos(a),s=Math.sin(a);
+  o[0]=c; o[1]=s; o[4]=-s; o[5]=c; return o; }
 
 // ============================================================
 //  物理（Three.js版から移植、Vector3 → 配列実装に置換）
@@ -112,8 +116,8 @@ const BODIES = [
   { name:'金星',   mass:4.8675e24,  radius:3.6, color:[0.91,0.78,0.48], pos:[-7.257694e-1,-2.529037e-2, 4.137322e-2], vel:[ 5.189070e-4,-2.031355e-2,-3.072687e-4] },
   { name:'地球',   mass:5.97237e24, radius:3.8, color:[0.16,0.43,0.84], pos:[-1.756637e-1, 9.659912e-1,-1.020845e-5], vel:[-1.722857e-2,-3.150626e-3, 5.692585e-7] },
   { name:'火星',   mass:6.4171e23,  radius:2.8, color:[0.76,0.27,0.05], pos:[ 1.383221e0,-2.380217e-2,-3.441211e-2], vel:[ 7.533013e-4, 1.517888e-2, 3.001893e-4] },
-  { name:'木星',   mass:1.8982e27,  radius:9,  color:[0.82,0.65,0.47], pos:[ 3.996321e0, 2.932561e0,-1.016168e-1], vel:[-4.558298e-3, 6.439756e-3, 7.531843e-5] },
-  { name:'土星',   mass:5.6834e26,  radius:8,  color:[0.89,0.85,0.65], rings:true, pos:[ 6.401527e0, 6.565147e0,-3.689043e-1], vel:[-4.285060e-3, 3.884301e-3, 1.025155e-4] },
+  { name:'木星',   mass:1.8982e27,  radius:9,  color:[0.82,0.65,0.47], bands:true, pos:[ 3.996321e0, 2.932561e0,-1.016168e-1], vel:[-4.558298e-3, 6.439756e-3, 7.531843e-5] },
+  { name:'土星',   mass:5.6834e26,  radius:8,  color:[0.89,0.85,0.65], rings:true, bands:true, pos:[ 6.401527e0, 6.565147e0,-3.689043e-1], vel:[-4.285060e-3, 3.884301e-3, 1.025155e-4] },
   { name:'天王星', mass:8.6810e25,  radius:5.5, color:[0.62,0.86,0.89], pos:[ 1.442374e1,-1.373533e1,-2.379145e-1], vel:[ 2.683840e-3, 2.665087e-3,-2.484929e-5] },
   { name:'海王星', mass:1.02413e26, radius:5.3, color:[0.25,0.40,0.79], pos:[ 1.680361e1,-2.499544e1, 1.274276e-1], vel:[ 2.584641e-3, 1.768820e-3,-9.629453e-5] },
 ];
@@ -236,26 +240,29 @@ window.addEventListener('resize', resize);
 // ------------------------------------------------------------
 //  球メッシュ生成（UV球）
 // ------------------------------------------------------------
-function makeSphere(stacks=24, slices=32){
-  const pos=[], nrm=[], idx=[];
+function makeSphere(stacks=32, slices=48){
+  const pos=[], nrm=[], uv=[], idx=[];
   for(let i=0;i<=stacks;i++){
-    const phi=Math.PI*i/stacks, sp=Math.sin(phi), cp=Math.cos(phi);
+    const v=i/stacks, phi=Math.PI*v, sp=Math.sin(phi), cp=Math.cos(phi);
     for(let j=0;j<=slices;j++){
-      const th=2*Math.PI*j/slices, st=Math.sin(th), ct=Math.cos(th);
+      const u=j/slices, th=2*Math.PI*u, st=Math.sin(th), ct=Math.cos(th);
       const x=sp*ct, y=cp, z=sp*st;
-      pos.push(x,y,z); nrm.push(x,y,z);
+      pos.push(x,y,z); nrm.push(x,y,z); uv.push(u, v);
     }
   }
   const row=slices+1;
   for(let i=0;i<stacks;i++) for(let j=0;j<slices;j++){
     const a=i*row+j, b=a+row;
-    idx.push(a,b,a+1, a+1,b,b+1);
+    // CCW(front-face)になる巻き順。外向き法線の面が表になる
+    idx.push(a,a+1,b, a+1,b+1,b);
   }
-  // pos+nrm interleaved
-  const vData=new Float32Array(pos.length/3*6);
-  for(let i=0;i<pos.length/3;i++){
-    vData[i*6]=pos[i*3]; vData[i*6+1]=pos[i*3+1]; vData[i*6+2]=pos[i*3+2];
-    vData[i*6+3]=nrm[i*3]; vData[i*6+4]=nrm[i*3+1]; vData[i*6+5]=nrm[i*3+2];
+  // pos(3)+nrm(3)+uv(2) interleaved
+  const n=pos.length/3;
+  const vData=new Float32Array(n*8);
+  for(let i=0;i<n;i++){
+    vData[i*8]=pos[i*3]; vData[i*8+1]=pos[i*3+1]; vData[i*8+2]=pos[i*3+2];
+    vData[i*8+3]=nrm[i*3]; vData[i*8+4]=nrm[i*3+1]; vData[i*8+5]=nrm[i*3+2];
+    vData[i*8+6]=uv[i*2]; vData[i*8+7]=uv[i*2+1];
   }
   return { vData, iData:new Uint16Array(idx), count:idx.length };
 }
@@ -264,6 +271,67 @@ const sphereVB = device.createBuffer({ size:sphere.vData.byteLength, usage:GPUBu
 device.queue.writeBuffer(sphereVB, 0, sphere.vData);
 const sphereIB = device.createBuffer({ size:Math.ceil(sphere.iData.byteLength/4)*4, usage:GPUBufferUsage.INDEX|GPUBufferUsage.COPY_DST });
 device.queue.writeBuffer(sphereIB, 0, sphere.iData);
+
+// ------------------------------------------------------------
+//  手続き的テクスチャ生成（Three.js版を移植: Canvas → GPUTexture）
+// ------------------------------------------------------------
+function rgb(c){ return `rgb(${c[0]*255|0},${c[1]*255|0},${c[2]*255|0})`; }
+function offsetLum(c, d){ // 明度を d だけずらす（簡易）
+  return [Math.max(0,Math.min(1,c[0]+d)), Math.max(0,Math.min(1,c[1]+d)), Math.max(0,Math.min(1,c[2]+d))];
+}
+function makePlanetCanvas(baseColor, opts={}){
+  const W=512, H=256;
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const ctx=cv.getContext('2d');
+  ctx.fillStyle=rgb(baseColor); ctx.fillRect(0,0,W,H);
+  // ノイズ斑点
+  for(let i=0;i<5000;i++){
+    const x=Math.random()*W, y=Math.random()*H, r=Math.random()*3+0.5;
+    const cc=offsetLum(baseColor,(Math.random()-0.5)*0.4);
+    ctx.fillStyle=`rgba(${cc[0]*255|0},${cc[1]*255|0},${cc[2]*255|0},0.5)`;
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  }
+  // 帯（木星・土星向け）
+  if(opts.bands){
+    for(let y=0;y<H;y+=6){
+      const cc=offsetLum(baseColor,(Math.random()-0.5)*0.35);
+      ctx.fillStyle=`rgba(${cc[0]*255|0},${cc[1]*255|0},${cc[2]*255|0},0.4)`;
+      ctx.fillRect(0,y,W,3+Math.random()*4);
+    }
+  }
+  return cv;
+}
+function makeRingCanvas(baseColor){
+  const W=256, H=8;
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const ctx=cv.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+  for(let x=0;x<W;x++){
+    const a=0.3+0.6*Math.abs(Math.sin(x*0.35))*(0.5+0.5*Math.random());
+    const cc=offsetLum(baseColor,(Math.random()-0.5)*0.2);
+    ctx.fillStyle=`rgba(${cc[0]*255|0},${cc[1]*255|0},${cc[2]*255|0},${a})`;
+    ctx.fillRect(x,0,1,H);
+  }
+  return cv;
+}
+// Canvas → GPUTexture（RGBA8, mip無し）
+function canvasToTexture(cv){
+  const tex=device.createTexture({
+    size:[cv.width, cv.height],
+    format:'rgba8unorm',
+    usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST|GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+  device.queue.copyExternalImageToTexture({source:cv}, {texture:tex}, [cv.width, cv.height]);
+  return tex;
+}
+const linearSampler = device.createSampler({ magFilter:'linear', minFilter:'linear',
+  addressModeU:'repeat', addressModeV:'clamp-to-edge' });
+
+// 各惑星のテクスチャ（太陽は単色発光なのでダミーでも可だが統一して生成）
+const planetTextures = BODIES.map(b=> canvasToTexture(makePlanetCanvas(b.color, {bands:b.bands})) );
+// 1x1白テクスチャ（フォールバック用）
+const whiteTex = (()=>{ const cv=document.createElement('canvas'); cv.width=cv.height=1;
+  const c=cv.getContext('2d'); c.fillStyle='#fff'; c.fillRect(0,0,1,1); return canvasToTexture(cv); })();
 
 // ------------------------------------------------------------
 //  WGSL: 惑星シェーダ
@@ -283,19 +351,23 @@ struct PerObject {
 };
 @group(0) @binding(0) var<uniform> G : Globals;
 @group(0) @binding(1) var<uniform> O : PerObject;
+@group(0) @binding(2) var texSampler : sampler;
+@group(0) @binding(3) var planetTex  : texture_2d<f32>;
 
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
   @location(0) worldPos : vec3<f32>,
   @location(1) normal   : vec3<f32>,
+  @location(2) uv       : vec2<f32>,
 };
 
 @vertex
-fn vs(@location(0) inPos: vec3<f32>, @location(1) inN: vec3<f32>) -> VSOut {
+fn vs(@location(0) inPos: vec3<f32>, @location(1) inN: vec3<f32>, @location(2) inUV: vec2<f32>) -> VSOut {
   var out : VSOut;
   let wp = O.model * vec4<f32>(inPos, 1.0);
   out.worldPos = wp.xyz;
   out.normal = (O.model * vec4<f32>(inN, 0.0)).xyz;
+  out.uv = inUV;
   out.pos = G.viewProj * wp;
   return out;
 }
@@ -303,6 +375,7 @@ fn vs(@location(0) inPos: vec3<f32>, @location(1) inN: vec3<f32>) -> VSOut {
 @fragment
 fn fs(in : VSOut) -> @location(0) vec4<f32> {
   let N = normalize(in.normal);
+  let texCol = textureSample(planetTex, texSampler, in.uv).rgb;
   if (O.params.x > 0.5) {
     // 太陽: 自己発光 + ふちの明るさ
     let viewDir = normalize(G.camPos.xyz - in.worldPos);
@@ -312,7 +385,7 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
   let L = normalize(G.sunPos.xyz - in.worldPos);
   let diff = max(dot(N, L), 0.0);
   let ambient = 0.08;
-  let col = O.color.rgb * (ambient + diff);
+  let col = texCol * (ambient + diff);
   return vec4<f32>(col, 1.0);
 }
 `});
@@ -332,6 +405,29 @@ fn vs(@location(0) p: vec3<f32>, @location(1) c: vec3<f32>) -> VSOut {
 fn fs(in:VSOut) -> @location(0) vec4<f32> { return vec4<f32>(in.col,1.0); }
 `});
 
+// 土星の環シェーダ（半透明・両面・半径方向テクスチャ）
+const ringShader = device.createShaderModule({ code:`
+struct Globals { viewProj : mat4x4<f32>, sunPos: vec4<f32>, camPos: vec4<f32>, };
+struct PerObject { model : mat4x4<f32>, color : vec4<f32>, params: vec4<f32>, };
+@group(0) @binding(0) var<uniform> G : Globals;
+@group(0) @binding(1) var<uniform> O : PerObject;
+@group(0) @binding(2) var texSampler : sampler;
+@group(0) @binding(3) var ringTex : texture_2d<f32>;
+struct VSOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, };
+@vertex
+fn vs(@location(0) inPos: vec3<f32>, @location(1) inUV: vec2<f32>) -> VSOut {
+  var o:VSOut;
+  o.pos = G.viewProj * (O.model * vec4<f32>(inPos,1.0));
+  o.uv = inUV;
+  return o;
+}
+@fragment
+fn fs(in:VSOut) -> @location(0) vec4<f32> {
+  let t = textureSample(ringTex, texSampler, in.uv);
+  return vec4<f32>(t.rgb, t.a * 0.9);
+}
+`});
+
 const starShader = device.createShaderModule({ code:`
 struct Globals { viewProj : mat4x4<f32>, sunPos: vec4<f32>, camPos: vec4<f32>, };
 @group(0) @binding(0) var<uniform> G : Globals;
@@ -349,16 +445,22 @@ fn fs(in:VSOut) -> @location(0) vec4<f32> { return vec4<f32>(vec3<f32>(in.b),1.0
 // ------------------------------------------------------------
 const globalsBuf = device.createBuffer({ size:64+16+16, usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST });
 
-// 惑星用: globals + per-object
+// 惑星用: globals + per-object + sampler + texture
 const planetBGL = device.createBindGroupLayout({ entries:[
   { binding:0, visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT, buffer:{type:'uniform'} },
   { binding:1, visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT, buffer:{type:'uniform', hasDynamicOffset:true} },
+  { binding:2, visibility:GPUShaderStage.FRAGMENT, sampler:{type:'filtering'} },
+  { binding:3, visibility:GPUShaderStage.FRAGMENT, texture:{sampleType:'float'} },
 ]});
 const planetPL = device.createPipelineLayout({ bindGroupLayouts:[planetBGL] });
 
 const vertexLayout = {
-  arrayStride: 6*4,
-  attributes:[ {shaderLocation:0,offset:0,format:'float32x3'}, {shaderLocation:1,offset:12,format:'float32x3'} ],
+  arrayStride: 8*4,
+  attributes:[
+    {shaderLocation:0,offset:0,format:'float32x3'},
+    {shaderLocation:1,offset:12,format:'float32x3'},
+    {shaderLocation:2,offset:24,format:'float32x2'},
+  ],
 };
 const planetPipeline = device.createRenderPipeline({
   layout:planetPL,
@@ -371,10 +473,13 @@ const planetPipeline = device.createRenderPipeline({
 // per-object uniform: dynamic offset で全惑星ぶんを1バッファに詰める
 const OBJ_STRIDE = 256; // 最小 dynamic offset alignment に合わせる
 const objBuf = device.createBuffer({ size:OBJ_STRIDE*BODIES.length, usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST });
-const planetBG = device.createBindGroup({ layout:planetBGL, entries:[
+// テクスチャが惑星ごとに異なるので bind group も惑星ごとに作る
+const planetBGs = BODIES.map((b,i)=> device.createBindGroup({ layout:planetBGL, entries:[
   { binding:0, resource:{buffer:globalsBuf} },
   { binding:1, resource:{buffer:objBuf, size:OBJ_STRIDE} },
-]});
+  { binding:2, resource:linearSampler },
+  { binding:3, resource:planetTextures[i].createView() },
+]}));
 
 // line / star は globals のみ
 const simpleBGL = device.createBindGroupLayout({ entries:[
@@ -402,6 +507,58 @@ const starPipeline = device.createRenderPipeline({
   primitive:{ topology:'point-list' },
   depthStencil:{ depthWriteEnabled:false, depthCompare:'less', format:'depth24plus' },
 });
+
+// ------------------------------------------------------------
+//  土星の環: ジオメトリ・パイプライン・bind group
+// ------------------------------------------------------------
+// 環メッシュ（内半径 r1 〜 外半径 r2 のリング、pos(3)+uv(2)）
+function makeRingMesh(r1, r2, seg=96){
+  const v=[], idx=[];
+  for(let i=0;i<=seg;i++){
+    const a=2*Math.PI*i/seg, ca=Math.cos(a), sa=Math.sin(a);
+    v.push(r1*ca, 0, r1*sa, 0, 0.5);   // 内側 uv.x=0
+    v.push(r2*ca, 0, r2*sa, 1, 0.5);   // 外側 uv.x=1
+  }
+  for(let i=0;i<seg;i++){
+    const a=i*2, b=a+2;
+    idx.push(a,b,a+1, a+1,b,b+1);
+  }
+  return { vData:new Float32Array(v), iData:new Uint16Array(idx), count:idx.length };
+}
+const ringMesh = makeRingMesh(1.4, 2.4); // 半径は土星の radius にmodelでスケール
+const ringVB = device.createBuffer({ size:ringMesh.vData.byteLength, usage:GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST });
+device.queue.writeBuffer(ringVB,0,ringMesh.vData);
+const ringIB = device.createBuffer({ size:Math.ceil(ringMesh.iData.byteLength/4)*4, usage:GPUBufferUsage.INDEX|GPUBufferUsage.COPY_DST });
+device.queue.writeBuffer(ringIB,0,ringMesh.iData);
+
+const ringBGL = device.createBindGroupLayout({ entries:[
+  { binding:0, visibility:GPUShaderStage.VERTEX, buffer:{type:'uniform'} },
+  { binding:1, visibility:GPUShaderStage.VERTEX, buffer:{type:'uniform'} },
+  { binding:2, visibility:GPUShaderStage.FRAGMENT, sampler:{type:'filtering'} },
+  { binding:3, visibility:GPUShaderStage.FRAGMENT, texture:{sampleType:'float'} },
+]});
+const ringPL = device.createPipelineLayout({ bindGroupLayouts:[ringBGL] });
+const ringVertexLayout = { arrayStride:5*4, attributes:[
+  {shaderLocation:0,offset:0,format:'float32x3'}, {shaderLocation:1,offset:12,format:'float32x2'} ]};
+const ringPipeline = device.createRenderPipeline({
+  layout:ringPL,
+  vertex:{ module:ringShader, entryPoint:'vs', buffers:[ringVertexLayout] },
+  fragment:{ module:ringShader, entryPoint:'fs', targets:[{ format, blend:{
+    color:{srcFactor:'src-alpha', dstFactor:'one-minus-src-alpha', operation:'add'},
+    alpha:{srcFactor:'one', dstFactor:'one-minus-src-alpha', operation:'add'} } }] },
+  primitive:{ topology:'triangle-list', cullMode:'none' },
+  depthStencil:{ depthWriteEnabled:false, depthCompare:'less', format:'depth24plus' },
+});
+// 環の per-object uniform（model行列のみ使用、色/paramsは未使用）
+const ringObjBuf = device.createBuffer({ size:256, usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST });
+const saturnIdx = BODIES.findIndex(b=>b.rings);
+const ringTexture = canvasToTexture(makeRingCanvas(BODIES[saturnIdx].color));
+const ringBG = device.createBindGroup({ layout:ringBGL, entries:[
+  { binding:0, resource:{buffer:globalsBuf} },
+  { binding:1, resource:{buffer:ringObjBuf} },
+  { binding:2, resource:linearSampler },
+  { binding:3, resource:ringTexture.createView() },
+]});
 
 // ------------------------------------------------------------
 //  星空バッファ
@@ -468,14 +625,18 @@ window.addEventListener('mousemove', e=>{
     cam.yaw -= dx*0.005;
     cam.pitch += dy*0.005;
     cam.pitch=Math.max(-1.5,Math.min(1.5,cam.pitch));
-  } else if(drag===2){ // パン
+  } else if(drag===2){ // パン（OrbitControls準拠: 掴んだ点がカーソルに追従）
     const eye=camEye();
-    const fwd=V.norm(V.sub(cam.target,eye));
-    const right=V.norm(V.cross(fwd,[0,1,0]));
-    const up=V.cross(right,fwd);
-    const s=cam.dist*0.0015;
-    cam.target=V.add(cam.target, V.scale(right,-dx*s));
-    cam.target=V.add(cam.target, V.scale(up, dy*s));
+    // カメラ基底ベクトル
+    const fwd=V.norm(V.sub(cam.target,eye));      // カメラ前方
+    const right=V.norm(V.cross(fwd,[0,1,0]));     // 画面右方向
+    const up=V.norm(V.cross(right,fwd));          // 画面上方向
+    // 画面上1pxあたりのワールド移動量（注視点の距離平面での実寸 / ピクセル高）
+    const fov=50*Math.PI/180;
+    const worldPerPixel=(2*cam.dist*Math.tan(fov/2))/window.innerHeight;
+    // ドラッグ方向に注視点を逆向きに動かす＝シーンがカーソルに追従
+    cam.target=V.add(cam.target, V.scale(right, -dx*worldPerPixel));
+    cam.target=V.add(cam.target, V.scale(up,     dy*worldPerPixel));
   }
 });
 canvas.addEventListener('wheel', e=>{
@@ -526,6 +687,18 @@ BODIES.forEach(b=>{
   legend.appendChild(span);
 });
 
+// ------------------------------------------------------------
+//  惑星名ラベル（HTML div をスクリーン座標に投影）
+// ------------------------------------------------------------
+const labelEls = BODIES.map(b=>{
+  const el=document.createElement('div');
+  el.textContent=b.name;
+  el.style.cssText='position:absolute;color:#cde;font-size:11px;pointer-events:none;'+
+    'text-shadow:0 0 3px #000;transform:translate(-50%,-150%);white-space:nowrap;z-index:5;';
+  document.body.appendChild(el);
+  return el;
+});
+
 // ============================================================
 //  描画ループ
 // ============================================================
@@ -573,6 +746,17 @@ function render(){
     device.queue.writeBuffer(objBuf, i*OBJ_STRIDE, buf);
   }
 
+  // 土星の環の model 行列（土星位置 × 傾き × 半径スケール）
+  {
+    const sp=toScene(state[saturnIdx].p);
+    // 傾き: X軸まわり、Three.js版に合わせ約 27°
+    const tilt = mat4Mul(mat4RotZ(0.2), mat4RotX(0.47));
+    const model = mat4Mul(mat4Mul(mat4Translate(sp), tilt), mat4Scale(BODIES[saturnIdx].radius));
+    const rbuf=new Float32Array(256/4);
+    rbuf.set(model,0);
+    device.queue.writeBuffer(ringObjBuf,0,rbuf);
+  }
+
   // トレイルをGPUへ
   if(showTrails) for(let i=1;i<trails.length;i++){
     if(trails[i].count>0) device.queue.writeBuffer(trails[i].buf,0,trails[i].data,0,trails[i].count*6);
@@ -593,16 +777,8 @@ function render(){
   pass.setVertexBuffer(0, starVB);
   pass.draw(STAR_N);
 
-  // 惑星
-  pass.setPipeline(planetPipeline);
-  pass.setVertexBuffer(0, sphereVB);
-  pass.setIndexBuffer(sphereIB,'uint16');
-  for(let i=0;i<state.length;i++){
-    pass.setBindGroup(0, planetBG, [i*OBJ_STRIDE]);
-    pass.drawIndexed(sphere.count);
-  }
-
-  // トレイル
+  // トレイル（惑星より先に描画。惑星は後で深度付きで描かれ、
+  //          球の手前に来た軌道線を上書きして隠す＝貫通防止）
   if(showTrails){
     pass.setPipeline(trailPipeline);
     pass.setBindGroup(0, simpleBG);
@@ -613,8 +789,40 @@ function render(){
     }
   }
 
+  // 惑星（テクスチャが惑星ごとに異なるので per-planet bind group）
+  pass.setPipeline(planetPipeline);
+  pass.setVertexBuffer(0, sphereVB);
+  pass.setIndexBuffer(sphereIB,'uint16');
+  for(let i=0;i<state.length;i++){
+    pass.setBindGroup(0, planetBGs[i], [i*OBJ_STRIDE]);
+    pass.drawIndexed(sphere.count);
+  }
+
+  // 土星の環（半透明なので最後に描画）
+  pass.setPipeline(ringPipeline);
+  pass.setBindGroup(0, ringBG);
+  pass.setVertexBuffer(0, ringVB);
+  pass.setIndexBuffer(ringIB,'uint16');
+  pass.drawIndexed(ringMesh.count);
+
   pass.end();
   device.queue.submit([enc.finish()]);
+
+  // 惑星名ラベルをスクリーン座標へ投影
+  for(let i=0;i<state.length;i++){
+    const sp=toScene(state[i].p);
+    // clip座標 = viewProj * worldPos
+    const x=sp[0],y=sp[1],z=sp[2];
+    const cx=viewProj[0]*x+viewProj[4]*y+viewProj[8]*z+viewProj[12];
+    const cy=viewProj[1]*x+viewProj[5]*y+viewProj[9]*z+viewProj[13];
+    const cw=viewProj[3]*x+viewProj[7]*y+viewProj[11]*z+viewProj[15];
+    if(cw<=0){ labelEls[i].style.display='none'; continue; }
+    const ndcX=cx/cw, ndcY=cy/cw;
+    if(ndcX<-1||ndcX>1||ndcY<-1||ndcY>1){ labelEls[i].style.display='none'; continue; }
+    labelEls[i].style.display='block';
+    labelEls[i].style.left=((ndcX*0.5+0.5)*window.innerWidth)+'px';
+    labelEls[i].style.top=((-ndcY*0.5+0.5)*window.innerHeight)+'px';
+  }
 
   updateDate();
   requestAnimationFrame(render);
