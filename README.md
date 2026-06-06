@@ -1,27 +1,16 @@
 # 太陽系シミュレーター
 
 太陽系の8惑星と太陽の運動を、実際の物理値に基づいてシミュレートする単一HTMLアプリケーションです。
-ブラウザで開くだけで動作します。
+ブラウザで [`solar_system.html`](solar_system.html) を開くだけで動作します。
 
 ![type](https://img.shields.io/badge/type-single--file-blue) ![deps](https://img.shields.io/badge/Three.js-0.161.0-green)
 
-## 2つのバージョン
-
-物理シミュレーションは共通で、描画レイヤーだけが異なる2ファイルを用意しています。
-
-| ファイル | 描画 | 備考 |
-|----------|------|------|
-| [`solar_system.html`](solar_system.html) | Three.js (WebGL) | 標準版。**銀河公転モード**を搭載 |
-| [`solar_system_webgpu.html`](solar_system_webgpu.html) | 自前 WebGPU (WGSL) | Three.js 非依存。行列演算・球メッシュ・シェーダ・カメラ操作をライブラリなしで実装 |
-
-両者ともテクスチャ・土星の環・惑星名ラベルなど見た目は同等です。
-
 ## 動作環境
 
-- **Three.js 版**: モダンなブラウザ（Chrome / Edge / Firefox / Safari）+ インターネット接続（Three.js を CDN から `importmap` で読み込むため）
-- **WebGPU 版**: WebGPU 対応ブラウザ（Chrome / Edge 113+ など）。非対応時は日本語のエラー画面を表示
+- モダンなブラウザ（Chrome / Edge / Firefox / Safari）
+- インターネット接続（Three.js を CDN から `importmap` で読み込むため）
 
-サーバーは不要。HTML ファイルをダブルクリックして開くだけです。
+サーバーは不要。`solar_system.html` をダブルクリックして開くだけです。
 
 ## 操作方法
 
@@ -40,9 +29,9 @@
 - **↺ リセット** — 初期状態（元期）に戻す
 - **重力伝播遅延** — 光速での重力伝播遅延の ON/OFF（デフォルト ON）
 - **軌道トレイル表示** — 軌跡の表示 ON/OFF
-- **銀河公転モード**（Three.js 版のみ） — 後述
+- **銀河公転モード** — 後述
 
-## 銀河公転モード（Three.js 版）
+## 銀河公転モード
 
 太陽系が銀河中心を公転している様子を可視化するモードです。
 
@@ -131,7 +120,6 @@ https://ssd.jpl.nasa.gov/api/horizons.api?format=text&COMMAND='399'&EPHEM_TYPE='
 
 ## 技術スタック
 
-- **Three.js 版**: [Three.js](https://threejs.org/) 0.161.0（ES Module / importmap 経由で CDN 読み込み）
-- **WebGPU 版**: WebGPU API + WGSL シェーダ。行列演算・球メッシュ・カメラ操作（OrbitControls 相当）まで外部ライブラリなしで自前実装
-- いずれも外部ビルドツール不要のバニラ HTML + JavaScript
+- [Three.js](https://threejs.org/) 0.161.0（ES Module / importmap 経由で CDN 読み込み）
+- 外部ビルドツール不要のバニラ HTML + JavaScript
 - 初期天体データ: NASA/JPL HORIZONS（J2000 元期の状態ベクトル）
