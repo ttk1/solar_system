@@ -54,11 +54,6 @@
     <span>銀河公転モード</span>
     <input type="checkbox" id="galaxy">
   </label>
-  <label class="row" id="exaggerateRow" style="display:none;padding-left:12px;">
-    <span>公転を誇張表示</span>
-    <input type="checkbox" id="exaggerate" checked>
-  </label>
-  <div class="small" id="galaxyNote" style="display:none;color:#fc9;"></div>
   <div id="legend"></div>
 </div>
 <div id="hint">マウス: 左ドラッグ=回転 / 右ドラッグ=移動 / ホイール=拡大縮小</div>
@@ -86,24 +81,16 @@ const YEAR = 365.25 * DAY;      // 1年 [s]
 const C = 299792458;            // 光速 [m/s]
 
 // ============================================================
-// 銀河公転
+// 銀河公転（実スケール）
 //  実際: 太陽系は銀河中心を半径~2.6万光年、周期~2.25億年、速度~220km/sで公転。
 //  描画は「太陽系原点系」: 惑星は常に原点付近に置いて float32 精度を保ち、
-//  トレイルと銀河中心だけを銀河公転の変位ぶん動かす。これにより
-//  実スケール(巨大半径)でも座標破綻せず、らせん状の軌跡が見える。
-//
-//  誇張ON/OFF の違い:
-//   - OFF: 実スケール。銀河公転速度は地球公転速度の約7.4倍(220/29.8)。
-//          実半径は桁違いに大きいので、トレイルはほぼ直線的に高速で流れる。
-//   - ON : 周回が画面で見えるよう、半径を縮め角速度を上げた誇張表示。
-//          らせん(サイクロイド)が巻いて「銀河を巡る」のが分かる。
+//  トレイルだけを銀河公転の変位ぶん動かす。これにより実スケール(巨大半径)でも
+//  座標破綻せず、らせん状の軌跡が見える。
+//  銀河公転速度は地球公転速度の約7.4倍(220/29.8)。実半径は桁違いに大きいので、
+//  トレイルはほぼ直線的に高速で流れ、銀河中心は遥か彼方で画面には映らない。
 // ============================================================
 const GALAXY_REAL_PERIOD = 2.25e8 * YEAR;   // 実際の公転周期 [s]
 const GALAXY_SPEED_RATIO = 220 / 29.8;      // 銀河公転速度 / 地球公転速度 ≈ 7.4
-// 誇張表示のON/OFF。詳細なロジックは描画セクション(SCALE定義後)にまとめる。
-let galaxyExaggerate = true;
-// 描画上の銀河公転半径（three.js units）。惑星軌道(~30AU=1200units)より十分大きく取る。
-const GALAXY_RADIUS_UNITS = 9000;
 
 // ============================================================
 // 天体データ
@@ -264,38 +251,25 @@ const _galaxyCosT = Math.cos(GALAXY_TILT), _galaxySinT = Math.sin(GALAXY_TILT);
 
 // 地球公転のシーン上の接線速度 [units/年]。半径 1AU=SCALE units を1年で1周。
 const EARTH_TANGENTIAL = 2 * Math.PI * SCALE;
-// 誇張ON/OFF それぞれの銀河公転パラメータ。
-//  R: 円軌道半径 [units]、omega: 角速度 [rad/年]。R·omega = 接線速度 [units/年]。
-// 太陽系原点系では実半径(巨大)でも変位差分しか使わないので精度問題は出ない。
-function galaxyParams(){
-  if(galaxyExaggerate){
-    // 誇張: 周回が画面で見えるよう半径を縮め、地球の約30倍の速さで巻く。
-    const R = GALAXY_RADIUS_UNITS;            // 9000 units
-    const speed = EARTH_TANGENTIAL * 30;      // 接線速度 [units/年]
-    return { R, omega: speed / R };
-  } else {
-    // 実スケール: 銀河公転速度は地球の約7.4倍。実周期から実半径を逆算。
-    const speed = EARTH_TANGENTIAL * GALAXY_SPEED_RATIO; // [units/年]
-    const omega = 2 * Math.PI / (GALAXY_REAL_PERIOD / YEAR); // [rad/年]
-    const R = speed / omega;                  // 実スケール半径(巨大) [units]
-    return { R, omega };
-  }
-}
+// 銀河公転の接線速度 [units/年]（地球公転の約7.4倍）と角速度 [rad/年]。
+// 太陽系原点系では実半径(巨大)を直接使わず、接線速度と向きだけで変位を積む。
+const GALAXY_SPEED = EARTH_TANGENTIAL * GALAXY_SPEED_RATIO;
+const GALAXY_OMEGA = 2 * Math.PI / (GALAXY_REAL_PERIOD / YEAR);
 
-// 太陽系の銀河公転による累積変位 [units]（太陽系原点系での銀河中心/トレイルの基準）。
-// 毎物理ステップで微小円弧変位を積算する。角速度が誇張ON/OFFで変わっても
-// 累積なので位相は連続。実半径が巨大でも 1ステップの変位 R·dθ は有限。
+// 太陽系の銀河公転による累積変位 [units]（太陽系原点系でのトレイルの基準）。
+// 毎物理ステップで微小変位を接線方向へ積む。omega が極小なので実時間では
+// 向きはほとんど回らず、軌跡はほぼ直線的に流れる（実際の銀河公転と同じ）。
 let galaxyAngle = 0;
 const galaxyDisp = new THREE.Vector3();
 // dtYears 年ぶん、銀河公転変位を進める。
 function advanceGalaxy(dtYears){
   if(!galaxyMode) return;
-  const { R, omega } = galaxyParams();
-  const dth = omega * dtYears;
-  // 黄道面(XZ)円の接線方向 dP/dθ = R(-sinθ, 0, cosθ)
+  const dth = GALAXY_OMEGA * dtYears;
+  const move = GALAXY_SPEED * dtYears;   // この間に進む距離 [units]
+  // 黄道面(XZ)円の接線方向 (-sinθ, 0, cosθ) へ move ぶん進む
   const s = Math.sin(galaxyAngle), c = Math.cos(galaxyAngle);
-  const dx = -s * R * dth;
-  const dzFlat = c * R * dth;
+  const dx = -s * move;
+  const dzFlat = c * move;
   // 63°傾ける（z成分を y,z に分配）
   galaxyDisp.x += dx;
   galaxyDisp.y += dzFlat * _galaxySinT;
@@ -327,48 +301,6 @@ function toSceneGalaxy(v){
   g.setAttribute('position', new THREE.BufferAttribute(arr,3));
   const m = new THREE.PointsMaterial({ color:0xffffff, size:2, sizeAttenuation:false });
   scene.add(new THREE.Points(g,m));
-})();
-
-// ------------------------------------------------------------
-// 銀河中心マーカー＋公転ガイド円（銀河公転モードでのみ表示）
-// 銀河中心はシーン原点に置き、太陽系がそのまわりを回る描画にする。
-// ------------------------------------------------------------
-const galaxyGroup = new THREE.Group();
-galaxyGroup.visible = false;
-scene.add(galaxyGroup);
-(function buildGalaxy(){
-  // 銀河中心の発光体
-  const coreGeo = new THREE.SphereGeometry(120, 32, 24);
-  const coreMat = new THREE.MeshBasicMaterial({ color:0xfff2c0 });
-  const core = new THREE.Mesh(coreGeo, coreMat);
-  galaxyGroup.add(core);
-  // 中心グロー
-  const glowCv = document.createElement('canvas'); glowCv.width=glowCv.height=128;
-  const gctx = glowCv.getContext('2d');
-  const grad = gctx.createRadialGradient(64,64,0,64,64,64);
-  grad.addColorStop(0,'rgba(255,240,200,1)');
-  grad.addColorStop(0.3,'rgba(255,220,150,0.5)');
-  grad.addColorStop(1,'rgba(255,200,120,0)');
-  gctx.fillStyle=grad; gctx.fillRect(0,0,128,128);
-  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-    map:new THREE.CanvasTexture(glowCv), transparent:true,
-    blending:THREE.AdditiveBlending, depthWrite:false }));
-  glow.scale.set(2400,2400,1);
-  galaxyGroup.add(glow);
-  // 公転ガイド円（太陽系の軌道）。galaxyOffset と同じ傾き(GALAXY_TILT)を適用。
-  const segs=256, gPos=new Float32Array((segs+1)*3);
-  for(let i=0;i<=segs;i++){
-    const a=2*Math.PI*i/segs;
-    const cx=GALAXY_RADIUS_UNITS*Math.cos(a);
-    const cz=GALAXY_RADIUS_UNITS*Math.sin(a);
-    gPos[i*3]   = cx;
-    gPos[i*3+1] = cz * _galaxySinT;
-    gPos[i*3+2] = cz * _galaxyCosT;
-  }
-  const gGeo=new THREE.BufferGeometry();
-  gGeo.setAttribute('position', new THREE.BufferAttribute(gPos,3));
-  const guide=new THREE.Line(gGeo, new THREE.LineBasicMaterial({ color:0x556699, transparent:true, opacity:0.4 }));
-  galaxyGroup.add(guide);
 })();
 
 // 手続き的テクスチャ生成（簡易）
@@ -591,48 +523,18 @@ document.getElementById('trails').addEventListener('change', e=>{
 
 function clearTrails(){
   trails.forEach(t=>{ t.count=0; t.line.geometry.setDrawRange(0,0); });
-  // 銀河公転の累積変位もリセット（座標系切替時にトレイルが混線しないように）
+  // 銀河公転の累積変位もリセット（モード切替時にトレイルが混線しないように）
   galaxyAngle = 0;
   galaxyDisp.set(0,0,0);
   trailGroup.position.set(0,0,0);
-  galaxyGroup.position.set(0,0,0);
 }
 
-const TILT_NOTE = '黄道面は銀河面に対し約63°傾いています。';
-// 銀河モード・誇張表示の状態に応じて、誇張行の表示と注記文を更新する。
-function updateGalaxyNote(){
-  const noteEl = document.getElementById('galaxyNote');
-  document.getElementById('exaggerateRow').style.display = galaxyMode ? 'flex' : 'none';
-  if(!galaxyMode){ noteEl.style.display = 'none'; return; }
-  noteEl.style.display = 'block';
-  noteEl.textContent = galaxyExaggerate
-    ? `※誇張表示: 半径を縮め周回が見えるよう公転を巻いて描画。${TILT_NOTE}`
-    : `※実スケール: 銀河公転速度は地球公転の約7.4倍。軌道半径は桁違いに大きく、銀河中心は遥か彼方のため画面に映りません（らせんはほぼ直線的に高速で流れます）。${TILT_NOTE}`;
-}
-
-// moveCamera=true のときだけカメラ位置を変更（起動時の同期では動かさない）
-function applyGalaxyMode(on, moveCamera){
+function applyGalaxyMode(on){
   galaxyMode = on;
-  galaxyGroup.visible = galaxyMode;
-  updateGalaxyNote();
   // 座標系が変わるので既存トレイルはクリア（混線防止）
   clearTrails();
-  if(moveCamera){
-    // 銀河中心が見えるようカメラを引く／戻す
-    controls.target.set(0,0,0);
-    if(galaxyMode) camera.position.set(0, GALAXY_RADIUS_UNITS*0.5, GALAXY_RADIUS_UNITS*1.6);
-    else           camera.position.set(0, 120, 240);
-    controls.update();
-  }
 }
-document.getElementById('galaxy').addEventListener('change', e=>applyGalaxyMode(e.target.checked, true));
-
-document.getElementById('exaggerate').addEventListener('change', e=>{
-  galaxyExaggerate = e.target.checked;
-  updateGalaxyNote();
-  // 半径・速度が大きく変わるので累積変位とトレイルをリセット（clearTrails内で実施）。
-  clearTrails();
-});
+document.getElementById('galaxy').addEventListener('change', e=>applyGalaxyMode(e.target.checked));
 
 // 起動時、ブラウザがリロードで復元したチェック状態に内部変数を同期する。
 // （change イベントはユーザー操作時しか発火しないため、これが無いと
@@ -641,10 +543,7 @@ document.getElementById('exaggerate').addEventListener('change', e=>{
   useDelay   = document.getElementById('delay').checked;
   showTrails = document.getElementById('trails').checked;
   trails.forEach(t=> t.line.visible = showTrails);
-  // 誇張表示は applyGalaxyMode(→updateGalaxyNote) より先に同期しておく
-  galaxyExaggerate = document.getElementById('exaggerate').checked;
-  // 銀河モードは復元状態を反映（起動直後なのでカメラは動かさない）
-  applyGalaxyMode(document.getElementById('galaxy').checked, false);
+  applyGalaxyMode(document.getElementById('galaxy').checked);
 })();
 
 window.addEventListener('resize', ()=>{
@@ -697,14 +596,6 @@ function animate(){
   // 過去点は太陽系の進行と逆に流れてらせんになる。
   const off = galaxyOffset();
   trailGroup.position.set(-off.x, -off.y, -off.z);
-  // 銀河中心グループは円軌道の中心に置く。初期位置 P0=(R,0,0) のぶん余分にずらすことで、
-  // 太陽系(原点)がちょうどガイド円(半径R)の円周上に乗る。
-  if(galaxyMode){
-    const R = galaxyParams().R;
-    galaxyGroup.position.set(-off.x - R, -off.y, -off.z);
-  } else {
-    galaxyGroup.position.set(0,0,0);
-  }
 
   controls.update();
   renderer.render(scene, camera);
