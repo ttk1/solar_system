@@ -352,6 +352,10 @@ const meshes = [];
 const trails = [];
 const labelEls = [];
 const TRAIL_MAX = 1500;
+// トレイルは「一定の軌道距離ごと」に点を打つ（時間基準ではない）。これにより
+// シミュレーション速度を変えてもトレイルの長さがほぼ一定に保たれる（等倍付近で
+// 消えなくなる）。保持される総長 ≈ TRAIL_SEG × TRAIL_MAX [units]。
+const TRAIL_SEG = 0.3;
 
 // トレイル専用グループ。銀河公転モードでは毎フレーム位置を -galaxyDisp にして、
 // 「太陽系基準で過去点が後ろに流れる」=らせんを表現する。グループ内のトレイル点は
@@ -414,7 +418,7 @@ BODIES.forEach((b, idx)=>{
   // フラスタムカリングで消えるため無効化（トレイルは常に表示したい）。
   line.frustumCulled = false;
   trailGroup.add(line);
-  trails.push({ line, points:[], head:0, count:0 });
+  trails.push({ line, count:0, last:null });
 
   // ラベル
   const el = document.createElement('div');
@@ -463,6 +467,8 @@ BODIES.forEach(b=>{
 function updateTrail(i){
   const t = trails[i];
   const sp = toSceneGalaxy(state[i].p);
+  // 前回打った点から TRAIL_SEG 以上進んだときだけ点を追加する（距離基準）。
+  if(t.last && t.last.distanceToSquared(sp) < TRAIL_SEG*TRAIL_SEG) return;
   const arr = t.line.geometry.attributes.position.array;
   if(t.count < TRAIL_MAX){
     arr[t.count*3]=sp.x; arr[t.count*3+1]=sp.y; arr[t.count*3+2]=sp.z;
@@ -472,6 +478,7 @@ function updateTrail(i){
     arr.copyWithin(0, 3);
     arr[(TRAIL_MAX-1)*3]=sp.x; arr[(TRAIL_MAX-1)*3+1]=sp.y; arr[(TRAIL_MAX-1)*3+2]=sp.z;
   }
+  if(t.last) t.last.copy(sp); else t.last = sp.clone();
   t.line.geometry.setDrawRange(0, t.count);
   t.line.geometry.attributes.position.needsUpdate = true;
 }
@@ -543,7 +550,7 @@ document.getElementById('trails').addEventListener('change', e=>{
 });
 
 function clearTrails(){
-  trails.forEach(t=>{ t.count=0; t.line.geometry.setDrawRange(0,0); });
+  trails.forEach(t=>{ t.count=0; t.last=null; t.line.geometry.setDrawRange(0,0); });
   // 銀河公転の累積変位もリセット（モード切替時にトレイルが混線しないように）
   galaxyAngle = 0;
   galaxyDisp.set(0,0,0);
