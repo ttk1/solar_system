@@ -35,7 +35,7 @@
   <div class="small" id="elapsed"></div>
   <label>シミュレーション速度
     <div class="row"><span class="small" id="speedVal"></span></div>
-    <input type="range" id="speed" min="-2" max="3" step="0.01" value="0">
+    <input type="range" id="speed" min="-7.5" max="3" step="0.01" value="0">
   </label>
   <div class="small">スライダー: 1秒あたりの経過年数（対数）</div>
   <div class="row" style="margin-top:8px;">
@@ -496,9 +496,20 @@ function updateDate(){
 // ============================================================
 const speedSlider = document.getElementById('speed');
 const speedVal = document.getElementById('speedVal');
+// 1秒あたりに進むシミュレーション時間を読みやすい単位で表す
+function fmtDuration(years){
+  const sec = years * YEAR;
+  if(years >= 1)      return `${years.toFixed(2)} 年`;
+  if(sec/DAY >= 1)    return `${(sec/DAY).toFixed(2)} 日`;
+  if(sec/3600 >= 1)   return `${(sec/3600).toFixed(2)} 時間`;
+  if(sec/60 >= 1)     return `${(sec/60).toFixed(2)} 分`;
+  return `${sec.toFixed(2)} 秒`;
+}
 function applySpeed(){
   yearsPerSecond = Math.pow(10, parseFloat(speedSlider.value));
-  speedVal.textContent = `1秒 = ${yearsPerSecond.toFixed(yearsPerSecond<1?3:2)} 年`;
+  const ratio = yearsPerSecond * YEAR; // 実時間に対する倍速（1で等倍）
+  const ratioStr = ratio < 10 ? ratio.toFixed(ratio < 1.5 ? 2 : 1) : Math.round(ratio).toLocaleString();
+  speedVal.textContent = `1秒 = ${fmtDuration(yearsPerSecond)}（実時間の ${ratioStr} 倍速）`;
 }
 speedSlider.addEventListener('input', applySpeed);
 applySpeed();
@@ -579,13 +590,21 @@ function animate(){
   if(running){
     // このフレームで進めるべきシミュレーション秒数
     const simAdvance = realDt * yearsPerSecond * YEAR;
-    let steps = Math.round(simAdvance / PHYS_DT);
-    steps = Math.min(steps, 2000); // 1フレームあたり上限
-    if(steps < 1 && simAdvance > 0) steps = 1;
+    // PHYS_DT(0.5日)は1ステップの上限。遅いときは可変dtで滑らかに（等倍まで対応）、
+    // 速いときは PHYS_DT 刻みに分割しつつ1フレーム最大2000ステップでクランプ。
+    let steps, dt;
+    if(simAdvance <= 0){
+      steps = 0; dt = 0;
+    } else if(simAdvance <= PHYS_DT){
+      steps = 1; dt = simAdvance;
+    } else {
+      steps = Math.min(Math.ceil(simAdvance / PHYS_DT), 2000);
+      dt = simAdvance / steps;
+    }
     for(let k=0;k<steps;k++){
-      stepPhysics(PHYS_DT);
+      stepPhysics(dt);
       // 銀河公転変位を積算。updateTrail は galaxyOffset を参照するので先に進める。
-      advanceGalaxy(PHYS_DT / YEAR);
+      advanceGalaxy(dt / YEAR);
       trailTimer++;
       if(showTrails && (trailTimer % 4 === 0)){
         for(let i=1;i<state.length;i++) updateTrail(i);
