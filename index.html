@@ -308,7 +308,7 @@ document.body.appendChild(renderer.domElement);
 
 // near は小さめ（実スケール表示で極小の天体にも寄れるよう）。深度精度は
 // logarithmicDepthBuffer で確保。
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.0005, 100000);
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.001, 60000);
 camera.position.set(0, 120, 240);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -385,6 +385,16 @@ function galaxyOffset(){ return galaxyMode ? galaxyDisp : _zeroVec; }
 function toSceneGalaxy(v){
   return toScene(v).add(galaxyOffset());
 }
+
+// トレイル基準原点（ワールド銀河座標, float64 で CPU 側保持）。トレイル頂点は
+// 「ワールド銀河座標 − trailRef」で float32 バッファに格納する。実スケールで天体に
+// 寄ると、絶対座標(原点から数十 units)を float32 に詰める際の量子化(>天体の実半径)が
+// 稲妻状のギザギザになる。基準を注視天体の近傍に置くと、格納値が極小になり float32
+// 精度が保たれて滑らかになる。フォーカスなしでは原点(0)＝従来挙動。
+const trailRef = new THREE.Vector3();
+// 頂点格納用ヘルパ: ワールド銀河座標 v を trailRef 相対に変換して返す（破壊的・再利用）。
+const _trailLocal = new THREE.Vector3();
+function toTrailLocal(v){ return _trailLocal.copy(v).sub(trailRef); }
 
 // 星空背景
 (function addStars(){
@@ -535,13 +545,13 @@ BODIES.forEach((b, idx)=>{
   }
   tgeo.setAttribute('color', new THREE.BufferAttribute(tcol,3));
   tgeo.setDrawRange(0,0);
-  const tmat = new THREE.LineBasicMaterial({ vertexColors:true, transparent:true, opacity:0.85 });
+  const tmat = new THREE.LineBasicMaterial({ vertexColors:true, transparent:true, opacity:0.85, depthWrite:false });
   const line = new THREE.Line(tgeo, tmat);
   // ジオメトリのバウンディングスフィアは更新されず、銀河公転で座標が大きく動くと
   // フラスタムカリングで消えるため無効化（トレイルは常に表示したい）。
   line.frustumCulled = false;
   trailGroup.add(line);
-  trails.push({ line, count:0, last:null });
+  trails.push({ line, last:null });
 
   // ラベル（クリックでその天体を中心に）
   const el = document.createElement('div');
@@ -592,19 +602,48 @@ BODIES.forEach((b,i)=>{
 // ============================================================
 function updateTrail(i){
   const t = trails[i];
-  const sp = toSceneGalaxy(state[i].p);
-  // 前回打った点から TRAIL_SEG 以上進んだときだけ点を追加する（距離基準）。
-  if(t.last && t.last.distanceToSquared(sp) < TRAIL_SEG*TRAIL_SEG) return;
+  const world = toSceneGalaxy(state[i].p);  // ワールド銀河座標(差分判定はこちらで)
+  const sp = toTrailLocal(world);           // trailRef 相対(バッファ格納用)
   const arr = t.line.geometry.attributes.position.array;
-  // 末尾詰め: 全体を1つ前へずらして末尾(=最新)に新点を置く。色は固定グラデ(末尾=明)
-  // なので、位置だけ流れることで明るい先端が進み暗い尾が残る＝流れて見える。
+  if(!t.last){
+    // 初回: 全頂点を最初の点で埋める。未使用領域(ゼロ=ワールド原点)が残らないので、
+    // 原点へ伸びる暴れた線が出ない。最初は全点同一で1点に潰れ、以降軌跡が伸びる。
+    for(let k=0;k<TRAIL_MAX;k++){ arr[k*3]=sp.x; arr[k*3+1]=sp.y; arr[k*3+2]=sp.z; }
+    t.last = world.clone();  // last はワールド銀河座標で保持（rebase の影響を受けない）
+    t.line.geometry.setDrawRange(0, TRAIL_MAX);
+    t.line.geometry.attributes.position.needsUpdate = true;
+    return;
+  }
+  // 前回打った点から TRAIL_SEG 以上進んだときだけ点を追加する（距離基準）。
+  if(t.last.distanceToSquared(world) < TRAIL_SEG*TRAIL_SEG) return;
+  // 全体を1つ前へずらして末尾(=最新)に新点を置く。色は固定グラデ(末尾=明)なので、
+  // 位置だけ流れることで明るい先端が進み暗い尾が残る＝流れて見える。
   arr.copyWithin(0, 3);
   const last3 = (TRAIL_MAX-1)*3;
   arr[last3]=sp.x; arr[last3+1]=sp.y; arr[last3+2]=sp.z;
-  t.count = Math.min(t.count + 1, TRAIL_MAX);
-  if(t.last) t.last.copy(sp); else t.last = sp.clone();
-  t.line.geometry.setDrawRange(TRAIL_MAX - t.count, t.count); // 末尾側 count 個を描画
+  t.last.copy(world);
   t.line.geometry.attributes.position.needsUpdate = true;
+}
+
+// トレイル基準原点を newRef へ移し替える。格納済み頂点は全て (旧基準相対)→(新基準相対)
+// へ平行移動する（見た目は不変、float32 精度だけが基準近傍で改善）。
+// rebase は全頂点(約 TRAIL_MAX×天体数)の書き換え=やや重いので、基準から tol 以上
+// 離れたときだけ行う。tol 以内なら float32 精度は ~tol×2^-23 で保たれる。
+//   - フォーカス中  : tol≈0（天体にぴったり追従。実スケールで寄っても稲妻が出ない）
+//   - フォーカスなし : tol 大きめ（数百 units のズレは全体表示では無視でき、高速早送りで
+//                      galaxyDisp が膨らんでも全頂点書き換えの頻発を防ぐ）
+const _refDelta = new THREE.Vector3();
+function rebaseTrails(newRef, tol = 0){
+  _refDelta.subVectors(trailRef, newRef);  // 旧 − 新 = 各頂点に足す量
+  if(_refDelta.lengthSq() <= tol*tol) return;
+  const dx=_refDelta.x, dy=_refDelta.y, dz=_refDelta.z;
+  for(const t of trails){
+    if(!t.last) continue;
+    const arr = t.line.geometry.attributes.position.array;
+    for(let k=0;k<arr.length;k+=3){ arr[k]+=dx; arr[k+1]+=dy; arr[k+2]+=dz; }
+    t.line.geometry.attributes.position.needsUpdate = true;
+  }
+  trailRef.copy(newRef);
 }
 
 // ============================================================
@@ -838,10 +877,11 @@ document.getElementById('trails').addEventListener('change', e=>{
 });
 
 function clearTrails(){
-  trails.forEach(t=>{ t.count=0; t.last=null; t.line.geometry.setDrawRange(0,0); });
+  trails.forEach(t=>{ t.last=null; t.line.geometry.setDrawRange(0,0); });
   // 銀河公転の累積変位もリセット（モード切替時にトレイルが混線しないように）
   galaxyAngle = 0;
   galaxyDisp.set(0,0,0);
+  trailRef.set(0,0,0);
   trailGroup.position.set(0,0,0);
 }
 
@@ -1004,11 +1044,17 @@ function setFocus(i){
   controls.target.copy(pos);
   camera.position.copy(pos).addScaledVector(_camDir, focusDistance(i));
   focusPrev.copy(pos);
+  // 一時停止中でも即座に高精度になるよう、トレイル基準をこの天体へ寄せておく
+  // （通常はメインループが毎フレーム rebase する）。
+  if(showTrails) rebaseTrails(toSceneGalaxy(state[i].p));
 }
 // 既定ビュー（フォーカス解除時）
 function resetView(){
   controls.target.set(0,0,0);
   camera.position.set(0,120,240);
+  // 全体表示の基準は galaxyOffset()（銀河モードoffならゼロ）。メインループと同じ基準に
+  // 揃えておくと、一時停止中の解除でも不要な再 rebase が起きない。
+  if(showTrails) rebaseTrails(galaxyOffset(), 200);
 }
 // クリック時: 同じ天体なら解除して既定ビュー、別の天体ならその天体にフォーカス。
 function focusOn(i){
@@ -1069,6 +1115,18 @@ function animate(){
       advanceGalaxy(dt / YEAR);
       trailTimer++;
       if(showTrails && (trailTimer % 4 === 0)){
+        // 点を打つ直前にトレイル基準原点を更新する。基準は「格納頂点を原点付近(小さい値)
+        // に保つ」ためのもの:
+        //  - フォーカス中  : その天体の近傍 → 実スケールで寄っても float32 が天体半径より
+        //                     細かく、稲妻状のギザギザが出ない。
+        //  - フォーカスなし: galaxyOffset() に追従 → 銀河公転で galaxyDisp が数百万 units
+        //                     まで膨らんでも、格納値 = world − trailRef ≈ 原点付近に保たれる。
+        //                     これをしないと高速早送り時に galaxyDisp が巨大→float32 量子化
+        //                     (>TRAIL_SEG)で軌跡が階段状にカクつく。
+        //  サブステップ内で打つ瞬間に rebase することで、高速時にフレーム内で galaxyDisp が
+        //  大きく動いても各点の格納値が小さく保たれる。
+        if(focusIndex != null) rebaseTrails(toSceneGalaxy(state[focusIndex].p)); // tol=0: 厳密追従
+        else rebaseTrails(galaxyOffset(), 200); // 全体表示: 200units以内ならスキップ(精度~2e-5)
         // 通常は太陽(i=0)を除外（原点に溜まるだけ）。銀河公転モードでは太陽系全体が
         // 動くので太陽の軌跡も描く。
         for(let i = galaxyMode ? 0 : 1; i<state.length; i++) updateTrail(i);
@@ -1100,11 +1158,13 @@ function animate(){
   // 太陽光源を太陽位置へ
   sunLight.position.copy(pivots[0].position);
 
-  // トレイルグループを太陽系基準へ平行移動。トレイル点はワールド銀河座標
-  // (toScene(v)+galaxyDisp) で蓄積されるので、-galaxyDisp で戻すと最新点が惑星に一致し、
-  // 過去点は太陽系の進行と逆に流れてらせんになる。
+  // トレイルグループを太陽系基準へ平行移動。トレイル点は (ワールド銀河座標 − trailRef)
+  // で蓄積されるので、描画位置 = 格納値 + trailGroup.position。最新点を惑星に一致させ
+  // (= ワールド銀河座標 − galaxyDisp) るには trailGroup.position = trailRef − galaxyDisp。
+  // この恒等式は trailRef の値によらず成立する（だから rebase は見た目を変えない）。
+  // 銀河モードoff & フォーカスなしでは trailRef=galaxyDisp=0 → trailGroup.position=0。
   const off = galaxyOffset();
-  trailGroup.position.set(-off.x, -off.y, -off.z);
+  trailGroup.position.set(trailRef.x - off.x, trailRef.y - off.y, trailRef.z - off.z);
 
   updateComets();
 
