@@ -141,9 +141,9 @@ const GALAXY_SPEED_RATIO = 220 / 29.8;      // 銀河公転速度 / 地球公転
 
 // ============================================================
 // 天体データ
-//  pos/vel: NASA/JPL HORIZONS から取得した J2000 元期
-//           (2000-01-01 12:00:00 TDB, JD 2451545.0) のヘリオセントリック
-//           (太陽中心) 状態ベクトル。基準面=黄道面J2000。
+//  pos/vel: NASA/JPL HORIZONS から取得した元期
+//           (2026-01-01 00:00:00 TDB, JD 2461041.5) のヘリオセントリック
+//           (太陽中心) 状態ベクトル。座標系=黄道面・J2000.0（座標基準は J2000 のまま）。
 //           pos [AU], vel [AU/day]。
 //  mass: 質量 [kg]
 //  radius: 表示用の見やすさ優先半径（実スケールではない）
@@ -156,36 +156,36 @@ const BODIES = [
   { name:'太陽',     mass:1.98892e30, radius:12, realRadiusKm:696000, color:0xffcc33, emissive:true, rotHours:609.12, tiltDeg:7.25,
     pos:[ 0, 0, 0], vel:[0,0,0] },
   { name:'水星',     mass:3.3011e23,  radius:2.2, realRadiusKm:2440, color:0xa9a9a9, rotHours:1407.6, tiltDeg:0.03,
-    pos:[-1.300936053754522e-1,-4.472876181353563e-1,-2.459830695805179e-2],
-    vel:[ 2.136639566801616e-2,-6.447989743836899e-3,-2.487863414837162e-3] },
+    pos:[-2.152013043776677e-1,-4.092076157002721e-1,-1.370326959192366e-2],
+    vel:[ 1.923185228281169e-2,-1.173762627757566e-2,-2.723155925167729e-3] },
   { name:'金星',     mass:4.8675e24,  radius:3.6, realRadiusKm:6052, color:0xe8c87a, rotHours:-5832.5, tiltDeg:177.4,
-    pos:[-7.183022963453890e-1,-3.265430819980606e-2, 4.101418202684621e-2],
-    vel:[ 7.981175157753219e-4,-2.029521870223381e-2,-3.234515157278357e-4] },
+    pos:[ 8.887724961635655e-2,-7.217623823170807e-1,-1.504405657506193e-2],
+    vel:[ 1.993856018796796e-2, 2.400365892738597e-3,-1.117471796465281e-3] },
   // 地表テクスチャは Solar System Scope (CC BY 4.0) を同梱 — README にクレジット記載
   { name:'地球',     mass:5.97237e24, radius:3.8, realRadiusKm:6371, color:0x2a6dd6, rotHours:23.9345, tiltDeg:23.44,
     textureUrl:'textures/2k_earth_daymap.jpg',
-    pos:[-1.771350992727098e-1, 9.672416867665306e-1,-4.085281582511366e-6],
-    vel:[-1.720762506872895e-2,-3.158782144324866e-3, 1.049888594613343e-7] },
+    pos:[-1.742814809205833e-1, 9.677589202546031e-1,-5.944511017526243e-5],
+    vel:[-1.720454736868129e-2,-3.116607022544302e-3, 2.371782782240443e-7] },
   // 月: 地球の運動(本体 vs 地球-月重心)を正しく扱うため質点として追加。moon:true で
   // 直列判定から除外し、トレイル間隔も地球周回に合わせて細かくする。同期回転(公転=自転)。
   { name:'月',       mass:7.342e22,   radius:1.4, realRadiusKm:1737, color:0xb0b0b0, moon:true, rotHours:655.7, tiltDeg:6.68,
-    pos:[-1.790843809223965e-1, 9.654035607264573e-1, 2.383726922995396e-4],
-    vel:[-1.683595459141215e-2,-3.580960720855671e-3,-6.540550604528720e-6] },
+    pos:[-1.733167230211788e-1, 9.699607953839370e-1, 1.528104265821843e-4],
+    vel:[-1.778458731904189e-2,-2.873537025181366e-3, 3.462907721246818e-6] },
   { name:'火星',     mass:6.4171e23,  radius:2.8, realRadiusKm:3390, color:0xc1440e, rotHours:24.6229, tiltDeg:25.19,
-    pos:[ 1.390715921746351e0,-1.341631815101244e-2,-3.446766277581799e-2],
-    vel:[ 6.714995020673780e-4, 1.518724809448758e-2, 3.016517720181207e-4] },
+    pos:[ 3.405796768622151e-1,-1.387002015945254e0,-3.741722678770108e-2],
+    vel:[ 1.411941195403098e-2, 4.540203195240467e-3,-2.510853588872874e-4] },
   { name:'木星',     mass:1.8982e27,  radius:9,  realRadiusKm:69911, color:0xd2a679, bands:true, rotHours:9.925, tiltDeg:3.13,
-    pos:[ 4.001177435589426e0, 2.938575782470499e0,-1.017852834518150e-1],
-    vel:[-4.568326581426814e-3, 6.443254772062298e-3, 7.558125550724480e-5] },
+    pos:[-1.694003692586729e0, 4.928882358715955e0, 1.742622062607817e-2],
+    vel:[-7.230928966261966e-3,-2.102446011794531e-3, 1.704614727867664e-4] },
   { name:'土星',     mass:5.6834e26,  radius:8,  realRadiusKm:58232, color:0xe3d9a6, rings:true, rotHours:10.656, tiltDeg:26.73,
-    pos:[ 6.406410428378656e0, 6.569988452110556e0,-3.690759730763678e-1],
-    vel:[-4.291884614620154e-3, 3.890802016952225e-3, 1.026524540265903e-4] },
+    pos:[ 9.507341652288904e0, 2.577390400089007e-1,-3.829356818352184e-1],
+    vel:[-4.633613819838813e-4, 5.564050537818699e-3,-7.814125666158304e-5] },
   { name:'天王星',   mass:8.6810e25,  radius:5.5, realRadiusKm:25362, color:0x9fdce3, rotHours:-17.24, tiltDeg:97.77,
-    pos:[ 1.443185527592405e1,-1.373432340215935e1,-2.381417673271042e-1],
-    vel:[ 2.678248748170153e-3, 2.672661616957798e-3,-2.478945316896398e-5] },
+    pos:[ 9.880310929544422e0, 1.680001212340429e1,-6.571963922668925e-2],
+    vel:[-3.426473251407670e-3, 1.810411374683696e-3, 5.129072871848880e-5] },
   { name:'海王星',   mass:1.02413e26, radius:5.3, realRadiusKm:24622, color:0x3f66c9, rotHours:16.11, tiltDeg:28.32,
-    pos:[ 1.681204725521350e1,-2.499176306235863e1, 1.272225154327781e-1],
-    vel:[ 2.578912210245283e-3, 1.776527208478390e-3,-9.601662561578555e-5] },
+    pos:[ 2.987212043847291e1, 5.189395049681488e-1,-6.990674683244985e-1],
+    vel:[-8.194631238457794e-5, 3.156675675787226e-3,-6.342935922171079e-5] },
 ];
 
 // 位置・速度を SI 単位 (m, m/s) に変換した状態ベクトル
@@ -208,12 +208,13 @@ const state = BODIES.map(b => ({
 // ============================================================
 // シミュレーション設定
 // ============================================================
-const EPOCH = new Date(Date.UTC(2000,0,1,12,0,0)); // J2000
+const EPOCH = new Date(Date.UTC(2026,0,1,0,0,0)); // 元期 2026-01-01 00:00 TDB (≈UTC)
 let simSeconds = 0;          // 経過シミュレーション秒
 let running = true;
 let yearsPerSecond = 1.0;    // 実時間1秒あたりのシミュレーション年数
 let showTrails = true;
 let showLabels = true;       // 天体名ラベルの表示
+let realSize = false;        // 実スケール表示（月は実スケール時のみ見せる）
 let sunMassMul = 1.0;        // 面白機能: 太陽質量の倍率
 let gMul = 1.0;              // 面白機能: 重力定数の倍率
 // 面白機能: 彗星（test particle。重力は受けるが惑星には影響しない）
@@ -357,7 +358,8 @@ const SCALE = 48;
 function toScene(v){ return new THREE.Vector3(v.x/AU*SCALE, v.z/AU*SCALE, -v.y/AU*SCALE); }
 
 // 地球の自転位相オフセット[rad]。昼夜が日時に合うよう調整（画面のつまみで調整可）。
-let EARTH_PHASE0 = -90 * Math.PI / 180;
+// 元期 2026-01-01 00:00（旧 2000-01-01 12:00 から時刻が12h≒180°ずれたぶん +180° 補正）。
+let EARTH_PHASE0 = 90 * Math.PI / 180;
 
 // 地球の自転軸（慣性空間で固定、シーン座標の単位ベクトル）。
 //  黄道傾斜 ε=23.44°、北極が黄経 EARTH_AXIS_LON 方向へ倒れる。軸を公転位置に
@@ -632,12 +634,14 @@ function makeRingTexture(color){
 
 // 凡例（クリックでその天体を中心に）
 const legend = document.getElementById('legend');
+const legendSpans = [];
 BODIES.forEach((b,i)=>{
   const span=document.createElement('span');
   span.style.cursor='pointer';
   span.innerHTML=`<span class="dot" style="background:#${b.color.toString(16).padStart(6,'0')}"></span>${b.name}`;
   span.addEventListener('click', ()=>focusOn(i));
   legend.appendChild(span);
+  legendSpans.push(span);
 });
 
 // ============================================================
@@ -705,7 +709,7 @@ function updateDate(){
   const da = String(d.getUTCDate()).padStart(2,'0');
   dateEl.textContent = `${y}年${mo}月${da}日`;
   const years = simSeconds/YEAR;
-  elapsedEl.textContent = `元期(J2000)から ${years>=0?'+':''}${years.toFixed(2)} 年`;
+  elapsedEl.textContent = `元期(2026年)から ${years>=0?'+':''}${years.toFixed(2)} 年`;
 }
 
 // ============================================================
@@ -923,7 +927,8 @@ applyPhysMul();
 
 document.getElementById('trails').addEventListener('change', e=>{
   showTrails = e.target.checked;
-  trails.forEach(t=> t.line.visible = showTrails);
+  // 月のトレイルは実スケール表示のときだけ（誇張表示では月自体を隠すため）
+  trails.forEach((t,i)=> t.line.visible = showTrails && !(BODIES[i].moon && !realSize));
 });
 
 document.getElementById('labels').addEventListener('change', e=>{
@@ -951,6 +956,7 @@ document.getElementById('galaxy').addEventListener('change', e=>applyGalaxyMode(
 // 実スケール表示: pivot.scale を切り替えて本体・環を実際の半径比で描く。
 // 実半径は距離スケールに対し極小なので、ほぼ点になる（注記で明示）。
 function applyRealSize(on){
+  realSize = on;
   document.getElementById('realSizeNote').style.display = on ? 'block' : 'none';
   for(let i=0;i<pivots.length;i++){
     let factor = 1;
@@ -959,6 +965,14 @@ function applyRealSize(on){
       factor = realUnits / BODIES[i].radius;
     }
     pivots[i].scale.setScalar(factor);
+    // 月は誇張表示だと地球周回半径(~0.12units)に対し大きすぎて地球にめり込むため、
+    // 実スケール表示のときだけ見せる（本体・ラベル・トレイル・凡例）。物理計算は常に有効。
+    if(BODIES[i].moon){
+      pivots[i].visible = on;
+      labelEls[i].style.display = on ? '' : 'none';
+      trails[i].line.visible = on && showTrails;
+      legendSpans[i].style.display = on ? '' : 'none';
+    }
   }
   // サイズが変わったのでズームを調整: フォーカス中はその天体に合った距離へ、
   // フォーカスなしは既定ビューへ戻す（実⇔誇張の切替で拡大しすぎが残らない）。
@@ -1255,6 +1269,8 @@ function animate(){
   // カメラから遠い天体ほど薄くして、引いたとき/奥の天体のラベルの重なりを軽減。
   // 「天体名を表示」オフのときは投影計算ごとスキップ（隠すのは change ハンドラで実施済み）。
   if(showLabels) for(let i=0;i<state.length;i++){
+    // 月は実スケール表示のときだけ見せる（誇張表示では本体ごと非表示）
+    if(BODIES[i].moon && !realSize){ labelEls[i].style.display='none'; continue; }
     _v.copy(pivots[i].position).project(camera);
     if(_v.z > 1 || _v.z < -1){ labelEls[i].style.display='none'; continue; }
     const x = (_v.x*0.5+0.5)*window.innerWidth;
