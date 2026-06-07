@@ -693,9 +693,9 @@ function restoreState(snap){
 // 現在以降で直列になる最初の simSeconds を探す（見つからなければ null）。
 function findNextAlignment(){
   const snap = snapshotState();
-  // Yoshida4次が高精度なため、スキャン幅を細かくしても結果は変わらない（検証済み:
-  // 0.2日でも0.02日でも同一結果）。速さ優先で 0.2日固定にする。
-  const SCAN_DT = 0.2 * DAY;
+  // スキャン幅。基本0.2日だが、太陽質量/重力を上げると公転が速くなる(周期∝1/√GM)ため
+  // それに合わせて細かくしないと極小を取り逃して誤検出する。倍率に応じて縮める。
+  const SCAN_DT = 0.2 * DAY / Math.sqrt(Math.max(0.05, gMul * sunMassMul));
   const MAX_YEARS = 300;             // 探索上限（直列は数百年以内に必ず現れる）
   const maxSteps = Math.ceil(MAX_YEARS * YEAR / SCAN_DT);
   let found = null;
@@ -729,12 +729,17 @@ alignBtn.addEventListener('click', ()=>{
     if(targetT == null){ alignBtn.textContent = '🪐 直列が見つかりません'; return; }
     catchup = { target: ()=>targetT, onArrive: ()=>{
       running = false; pauseBtn.textContent = '▶ 再生'; // 直列の瞬間で一時停止
-      // 飛んだ先（直列）の日付と、そのときの集まり角度(spread)をボタンに表示
       const d = new Date(EPOCH.getTime() + targetT*1000);
       const deg = Math.round(alignmentSpread() * 180 / Math.PI);
-      alignBtn.textContent = `🪐 直列 ${d.getUTCFullYear()}年`
-        + `${String(d.getUTCMonth()+1).padStart(2,'0')}月${String(d.getUTCDate()).padStart(2,'0')}日`
-        + `（${deg}°）`;
+      // 到達時に実際の集まり角度を再確認。閾値を明確に超えていたら、探索時と
+      // 配置がズレた(物理倍率を極端にいじった等)とみなし、失敗として知らせる。
+      if(deg > 100){
+        alignBtn.textContent = `🪐 直列を捉えられず（${deg}°）`;
+      } else {
+        alignBtn.textContent = `🪐 直列 ${d.getUTCFullYear()}年`
+          + `${String(d.getUTCMonth()+1).padStart(2,'0')}月${String(d.getUTCDate()).padStart(2,'0')}日`
+          + `（${deg}°）`;
+      }
     }};
     running = true;
     pauseBtn.textContent = '⏸ 一時停止';
