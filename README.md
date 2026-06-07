@@ -6,7 +6,7 @@
 
 ## ファイル構成
 
-- [`solar_system.html`](solar_system.html) — 本体（HTML + JavaScript）
+- [`index.html`](index.html) — 本体（HTML + JavaScript）
 - `textures/2k_earth_daymap.jpg` — 地球の地表テクスチャ（[クレジット](#クレジット)参照）
 
 ## 動作環境
@@ -21,7 +21,7 @@
 ```sh
 # 例: このディレクトリで
 python -m http.server
-# → ブラウザで http://localhost:8000/solar_system.html を開く
+# → ブラウザで http://localhost:8000/ を開く
 ```
 
 `file://`（ファイルをダブルクリック）でも動きますが、ブラウザによってはローカル画像の読み込みがブロックされ、地球が手続き生成テクスチャ（フォールバック）で表示されることがあります。
