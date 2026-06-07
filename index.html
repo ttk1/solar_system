@@ -108,7 +108,7 @@ const GALAXY_SPEED_RATIO = 220 / 29.8;      // 銀河公転速度 / 地球公転
 //  tiltDeg: 赤道傾斜角 [度]（自転軸の傾き）。土星の環もこの傾きの赤道面に置く。
 // ============================================================
 const BODIES = [
-  { name:'太陽',     mass:1.98892e30, radius:14, color:0xffcc33, emissive:true, rotHours:609.12, tiltDeg:7.25,
+  { name:'太陽',     mass:1.98892e30, radius:13, color:0xffcc33, emissive:true, rotHours:609.12, tiltDeg:7.25,
     pos:[ 0, 0, 0], vel:[0,0,0] },
   { name:'水星',     mass:3.3011e23,  radius:2.2, color:0xa9a9a9, rotHours:1407.6, tiltDeg:0.03,
     pos:[-1.300936053754522e-1,-4.472876181353563e-1,-2.459830695805179e-2],
@@ -258,7 +258,8 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 
 // 画面スケール: 1 AU = SCALE three.js units
-const SCALE = 40;
+// 水星の近日点(≈0.31AU)が太陽の表示半径に入り込まないよう、やや広めに取る。
+const SCALE = 48;
 function toScene(v){ return new THREE.Vector3(v.x/AU*SCALE, v.z/AU*SCALE, -v.y/AU*SCALE); }
 
 // 地球テクスチャの経度0とメッシュ向きのズレを吸収する位相オフセット。
