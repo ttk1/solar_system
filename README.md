@@ -159,5 +159,6 @@ https://ssd.jpl.nasa.gov/api/horizons.api?format=text&COMMAND='399'&EPHEM_TYPE='
 
 ## クレジット
 
+- 実装: コーディングはすべて [Claude Opus 4.8](https://www.anthropic.com/claude)（Anthropic）を用いて行いました。
 - 地球の地表テクスチャ: [Solar System Scope](https://www.solarsystemscope.com/textures/) の `2k_earth_daymap.jpg` を `textures/` に同梱。Creative Commons Attribution 4.0 International（CC BY 4.0）ライセンスにより利用。
 - 初期天体データ: [NASA/JPL HORIZONS](https://ssd.jpl.nasa.gov/horizons/)
