@@ -43,7 +43,7 @@
     <div class="row"><span class="small" id="speedVal"></span></div>
     <input type="range" id="speed" min="-7.5" max="3" step="0.01" value="0">
   </label>
-  <div class="small">スライダー: 1秒あたりの経過年数（対数）</div>
+  <div class="small">スライダー: 対数（左=等倍 … 右=1000年/秒）</div>
   <div class="row" style="margin-top:8px;">
     <button id="pause">⏸ 一時停止</button>
     <button id="reset">↺ リセット</button>
@@ -134,7 +134,7 @@ const GALAXY_SPEED_RATIO = 220 / 29.8;      // 銀河公転速度 / 地球公転
 //  tiltDeg: 赤道傾斜角 [度]（自転軸の傾き）。土星の環もこの傾きの赤道面に置く。
 // ============================================================
 const BODIES = [
-  { name:'太陽',     mass:1.98892e30, radius:13, color:0xffcc33, emissive:true, rotHours:609.12, tiltDeg:7.25,
+  { name:'太陽',     mass:1.98892e30, radius:12, color:0xffcc33, emissive:true, rotHours:609.12, tiltDeg:7.25,
     pos:[ 0, 0, 0], vel:[0,0,0] },
   { name:'水星',     mass:3.3011e23,  radius:2.2, color:0xa9a9a9, rotHours:1407.6, tiltDeg:0.03,
     pos:[-1.300936053754522e-1,-4.472876181353563e-1,-2.459830695805179e-2],
@@ -176,8 +176,7 @@ const state = BODIES.map(b => ({
 // 系全体の運動量がゼロになるよう太陽の速度を補正（重心を静止させる）
 (function balanceMomentum(){
   const totalP = new THREE.Vector3();
-  let totalM = 0;
-  for(const s of state){ totalP.addScaledVector(s.v, s.mass); totalM += s.mass; }
+  for(const s of state) totalP.addScaledVector(s.v, s.mass);
   // 太陽(index0)で相殺
   state[0].v.addScaledVector(totalP, -1/state[0].mass);
 })();
@@ -252,8 +251,19 @@ computeAccelerations();
 // 描画 (Three.js)
 // ============================================================
 const scene = new THREE.Scene();
-const renderer = new THREE.WebGLRenderer({ antialias:true });
-renderer.setPixelRatio(window.devicePixelRatio);
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias:true });
+} catch(e){
+  document.body.innerHTML =
+    '<div style="color:#fbb;font-family:sans-serif;padding:40px;line-height:1.8;">'
+    + '<b>WebGL を初期化できませんでした。</b><br><br>'
+    + 'WebGL対応のブラウザ（最新の Chrome / Edge / Firefox / Safari）で開いてください。<br>'
+    + 'また、地球テクスチャの読み込みのため <code>http://localhost</code> 等のサーバー経由での起動を推奨します。'
+    + '</div>';
+  throw e;
+}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); // 高DPIで重くなりすぎないよう上限2
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
@@ -725,8 +735,7 @@ alignBtn.addEventListener('click', ()=>{
   setTimeout(()=>{
     const targetT = findNextAlignment();
     alignBtn.disabled = false;
-    alignBtn.textContent = ALIGN_BTN_LABEL;
-    if(targetT == null){ alignBtn.textContent = '🪐 直列が見つかりません'; return; }
+    if(targetT == null){ alignTempLabel('🪐 直列が見つかりません'); return; }
     catchup = { target: ()=>targetT, onArrive: ()=>{
       running = false; pauseBtn.textContent = '▶ 再生'; // 直列の瞬間で一時停止
       const d = new Date(EPOCH.getTime() + targetT*1000);
@@ -734,7 +743,7 @@ alignBtn.addEventListener('click', ()=>{
       // 到達時に実際の集まり角度を再確認。閾値を明確に超えていたら、探索時と
       // 配置がズレた(物理倍率を極端にいじった等)とみなし、失敗として知らせる。
       if(deg > 100){
-        alignBtn.textContent = `🪐 直列を捉えられず（${deg}°）`;
+        alignTempLabel(`🪐 直列を捉えられず（${deg}°）`);
       } else {
         alignBtn.textContent = `🪐 直列 ${d.getUTCFullYear()}年`
           + `${String(d.getUTCMonth()+1).padStart(2,'0')}月${String(d.getUTCDate()).padStart(2,'0')}日`
@@ -747,6 +756,11 @@ alignBtn.addEventListener('click', ()=>{
 });
 const ALIGN_BTN_LABEL = '🪐 次の惑星直列へ';
 alignBtn.textContent = ALIGN_BTN_LABEL;
+// 失敗メッセージなどを一時表示し、数秒後に既定ラベルへ戻す
+function alignTempLabel(msg){
+  alignBtn.textContent = msg;
+  setTimeout(()=>{ if(!catchup) alignBtn.textContent = ALIGN_BTN_LABEL; }, 4000);
+}
 
 // 面白機能: 太陽質量・重力定数の倍率
 const sunMassSlider = document.getElementById('sunMass');
@@ -863,22 +877,19 @@ function animate(){
   // 角度は 0〜2π に剰余を取り、大きな simSeconds でも精度を保つ。
   for(let i=0;i<state.length;i++){
     pivots[i].position.copy(toScene(state[i].p)); // 位置は pivot に（mesh は pivot 中心）
+    // 自転角: 恒星日に基づく。負の rotHours は逆行。剰余で 0〜2π に収め精度を保つ。
+    const turns = simSeconds / (BODIES[i].rotHours * 3600);
+    const spin = (turns - Math.floor(turns)) * 2 * Math.PI;
     if(BODIES[i].textureUrl){
-      // 地球（実テクスチャ）: 慣性空間で固定した自転軸 EARTH_AXIS のまわりを
-      // 恒星日で自転させる。軸が公転位置によらず一定なので、季節（夏至に北極が
-      // 太陽側＝白夜 など）とターミネーターの傾きが自然に再現される。
-      // 自転位相 EARTH_PHASE0 を1点合わせることで昼夜が日時に同期する。
-      const periodSec = BODIES[i].rotHours * 3600; // 恒星日
-      const turns = simSeconds / periodSec;
-      const theta = (turns - Math.floor(turns)) * 2 * Math.PI + EARTH_PHASE0;
-      // ローカルy(テクスチャの北極)を EARTH_AXIS に向ける × y軸まわりに自転θ
+      // 地球（実テクスチャ）: 慣性空間で固定した自転軸 EARTH_AXIS のまわりを自転させる。
+      // 軸が公転位置によらず一定なので、季節（夏至に北極が太陽側＝白夜 など）と
+      // ターミネーターの傾きが再現される。位相 EARTH_PHASE0 で昼夜を日時に同期。
+      // 姿勢 = ローカルy(テクスチャの北極)を EARTH_AXIS に向ける × y軸まわりに自転。
       _earthTiltQuat.setFromUnitVectors(_yAxis, EARTH_AXIS);
-      _earthSpinQuat.setFromAxisAngle(_yAxis, theta);
+      _earthSpinQuat.setFromAxisAngle(_yAxis, spin + EARTH_PHASE0);
       meshes[i].quaternion.copy(_earthTiltQuat).multiply(_earthSpinQuat);
     } else {
-      const periodSec = BODIES[i].rotHours * 3600;  // 負値=逆行
-      const turns = simSeconds / periodSec;
-      meshes[i].rotation.y = (turns - Math.floor(turns)) * 2 * Math.PI;
+      meshes[i].rotation.y = spin;
     }
   }
   // 太陽光源を太陽位置へ
@@ -894,15 +905,19 @@ function animate(){
   renderer.render(scene, camera);
   updateDate();
 
-  // ラベル位置をスクリーン座標へ投影（pivot=天体のワールド位置）
+  // ラベル位置をスクリーン座標へ投影（pivot=天体のワールド位置）。
+  // カメラから遠い天体ほど薄くして、引いたとき/奥の天体のラベルの重なりを軽減。
   for(let i=0;i<state.length;i++){
     _v.copy(pivots[i].position).project(camera);
     if(_v.z > 1 || _v.z < -1){ labelEls[i].style.display='none'; continue; }
     const x = (_v.x*0.5+0.5)*window.innerWidth;
     const y = (-_v.y*0.5+0.5)*window.innerHeight;
+    const dist = pivots[i].position.distanceTo(camera.position);
+    const op = Math.max(0.25, Math.min(1, 1 - (dist - 400) / 3000)); // 近=1, 遠=0.25
     labelEls[i].style.display='block';
     labelEls[i].style.left = x+'px';
     labelEls[i].style.top = y+'px';
+    labelEls[i].style.opacity = op.toFixed(2);
   }
 }
 animate();
