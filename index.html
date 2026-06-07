@@ -33,7 +33,6 @@
   #fun .fun-title { font-size:12px; color:#e9b; margin-bottom:6px; }
   #fun button { display:block; width:100%; }
   #fun label { display:block; margin-top:6px; font-size:13px; }
-  #fun label.row { display:flex; }
   #fun input[type=range] { width:100%; }
 </style>
 </head>
@@ -60,6 +59,10 @@
   <label class="row" style="margin-top:8px;">
     <span>軌道トレイル表示</span>
     <input type="checkbox" id="trails" checked>
+  </label>
+  <label class="row">
+    <span>天体名を表示</span>
+    <input type="checkbox" id="labels" checked>
   </label>
   <label class="row">
     <span>銀河公転モード</span>
@@ -204,6 +207,7 @@ let simSeconds = 0;          // 経過シミュレーション秒
 let running = true;
 let yearsPerSecond = 1.0;    // 実時間1秒あたりのシミュレーション年数
 let showTrails = true;
+let showLabels = true;       // 天体名ラベルの表示
 let sunMassMul = 1.0;        // 面白機能: 太陽質量の倍率
 let gMul = 1.0;              // 面白機能: 重力定数の倍率
 // 面白機能: 彗星（test particle。重力は受けるが惑星には影響しない）
@@ -884,6 +888,12 @@ document.getElementById('trails').addEventListener('change', e=>{
   trails.forEach(t=> t.line.visible = showTrails);
 });
 
+document.getElementById('labels').addEventListener('change', e=>{
+  showLabels = e.target.checked;
+  // 非表示にしたら即座に全ラベルを隠す（次フレームの描画ループでは再表示されない）
+  if(!showLabels) labelEls.forEach(el=> el.style.display='none');
+});
+
 function clearTrails(){
   trails.forEach(t=>{ t.last=null; t.line.geometry.setDrawRange(0,0); });
   // 銀河公転の累積変位もリセット（モード切替時にトレイルが混線しないように）
@@ -925,6 +935,8 @@ document.getElementById('realSize').addEventListener('change', e=>applyRealSize(
 (function syncControlsFromDOM(){
   showTrails = document.getElementById('trails').checked;
   trails.forEach(t=> t.line.visible = showTrails);
+  showLabels = document.getElementById('labels').checked;
+  if(!showLabels) labelEls.forEach(el=> el.style.display='none');
   applyGalaxyMode(document.getElementById('galaxy').checked);
   applyRealSize(document.getElementById('realSize').checked);
 })();
@@ -1203,7 +1215,8 @@ function animate(){
 
   // ラベル位置をスクリーン座標へ投影（pivot=天体のワールド位置）。
   // カメラから遠い天体ほど薄くして、引いたとき/奥の天体のラベルの重なりを軽減。
-  for(let i=0;i<state.length;i++){
+  // 「天体名を表示」オフのときは投影計算ごとスキップ（隠すのは change ハンドラで実施済み）。
+  if(showLabels) for(let i=0;i<state.length;i++){
     _v.copy(pivots[i].position).project(camera);
     if(_v.z > 1 || _v.z < -1){ labelEls[i].style.display='none'; continue; }
     const x = (_v.x*0.5+0.5)*window.innerWidth;
