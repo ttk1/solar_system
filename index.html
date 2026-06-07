@@ -32,6 +32,7 @@
   #fun .fun-title { font-size:12px; color:#e9b; margin-bottom:6px; }
   #fun button { display:block; width:100%; }
   #fun label { display:block; margin-top:6px; font-size:13px; }
+  #fun label.row { display:flex; }
   #fun input[type=range] { width:100%; }
 </style>
 </head>
@@ -77,6 +78,11 @@
   <div id="fun">
     <div class="fun-title">🎲 面白機能</div>
     <button id="alignBtn">🪐 次の惑星直列へ</button>
+    <button id="cometBtn" style="margin-top:6px;">☄ 彗星を発射</button>
+    <label class="row" style="margin-top:6px;">
+      <span>☄ ランダムに飛来</span>
+      <input type="checkbox" id="autoComet">
+    </label>
     <label style="margin-top:8px;">☀ 太陽質量 <span class="small" id="sunMassVal"></span>
       <input type="range" id="sunMass" min="0" max="10" step="0.1" value="1">
     </label>
@@ -191,6 +197,9 @@ let yearsPerSecond = 1.0;    // 実時間1秒あたりのシミュレーショ�
 let showTrails = true;
 let sunMassMul = 1.0;        // 面白機能: 太陽質量の倍率
 let gMul = 1.0;              // 面白機能: 重力定数の倍率
+// 面白機能: 彗星（test particle。重力は受けるが惑星には影響しない）
+//  各要素 { p, v, a:Vector3, mesh, tail, tailPos:[] }
+const comets = [];
 // 早送り(キャッチアップ)中の状態。null=通常。
 //  { target: ()=>目標simSeconds, onArrive: ()=>到達時の処理 }
 let catchup = null;
@@ -218,6 +227,20 @@ function computeAccelerations(){
       si.a.addScaledVector(tmp, f / r);
     }
   }
+  // 彗星(test particle): 全天体から重力を受ける。惑星側へは影響しない。
+  for(const cmt of comets){
+    cmt.a.set(0,0,0);
+    for(let j=0;j<state.length;j++){
+      const sj = state[j];
+      tmp.subVectors(sj.p, cmt.p);
+      const r2 = tmp.lengthSq();
+      if(r2 === 0) continue;
+      const r = Math.sqrt(r2);
+      const m = (j === 0) ? sj.mass * sunMassMul : sj.mass;
+      const f = G * gMul * m / r2;
+      cmt.a.addScaledVector(tmp, f / r);
+    }
+  }
 }
 
 // Yoshida 4次シンプレクティック積分の係数（drift c[], kick d[]）。
@@ -227,8 +250,14 @@ const _Y_W0 = -Math.cbrt(2) * _Y_W1;
 const Y_C = [_Y_W1/2, (_Y_W0+_Y_W1)/2, (_Y_W0+_Y_W1)/2, _Y_W1/2]; // 位置更新
 const Y_D = [_Y_W1, _Y_W0, _Y_W1];                                 // 速度更新
 
-function drift(dt){ for(const s of state) s.p.addScaledVector(s.v, dt); }
-function kick(dt){ for(const s of state) s.v.addScaledVector(s.a, dt); }
+function drift(dt){
+  for(const s of state) s.p.addScaledVector(s.v, dt);
+  for(const c of comets) c.p.addScaledVector(c.v, dt);
+}
+function kick(dt){
+  for(const s of state) s.v.addScaledVector(s.a, dt);
+  for(const c of comets) c.v.addScaledVector(c.a, dt);
+}
 
 // 1ステップ = Yoshida 4次シンプレクティック積分（3回force評価/step）。
 // drift c1, kick d1, drift c2, kick d2, drift c3, kick d3, drift c4
@@ -633,6 +662,7 @@ document.getElementById('reset').addEventListener('click', ()=>{
   simSeconds = 0;
   catchup = null;
   clearTrails();
+  clearComets();
   computeAccelerations();
 });
 
@@ -816,6 +846,100 @@ window.addEventListener('resize', ()=>{
 });
 
 // ============================================================
+// 面白機能: 彗星（test particle）
+// ============================================================
+const COMET_MAX = 8;           // 同時に存在できる彗星の最大数
+const cometTailMat = new THREE.LineBasicMaterial({ color:0x9fdcff, transparent:true, opacity:0.6 });
+
+function spawnComet(){
+  if(comets.length >= COMET_MAX) return; // 上限に達していたら何もしない
+  // それっぽいランダムな高離心率軌道（実在のものではない）。
+  const rApo = (30 + Math.random()*30) * AU;        // 遠日点 30〜60 AU から発射
+  const q    = (0.1 + Math.random()*1.9) * AU;      // 近日点 0.1〜2 AU
+  const a    = (q + rApo) / 2;                       // 軌道長半径
+  // 発射方向（黄道面に近いランダム方向、少しだけ面外に傾ける）
+  const th = Math.random()*Math.PI*2;
+  const zTilt = (Math.random()-0.5)*0.5;            // 面外成分（小さめ）
+  const dir = new THREE.Vector3(Math.cos(th), Math.sin(th), zTilt).normalize();
+  const pos = dir.clone().multiplyScalar(rApo);
+  // 遠日点での速度（vis-viva）。方向は黄道面内で位置に垂直な接線。
+  const GM = G * gMul * BODIES[0].mass * sunMassMul;
+  const vMag = Math.sqrt(Math.max(0, GM * (2/rApo - 1/a)));
+  const up = new THREE.Vector3(0,0,1);
+  let tangent = new THREE.Vector3().crossVectors(up, dir);
+  if(tangent.lengthSq() < 1e-6) tangent.set(1,0,0);
+  tangent.normalize();
+  if(Math.random()<0.5) tangent.negate();           // 公転の向きをランダムに
+  const vel = tangent.multiplyScalar(vMag);
+
+  // 見た目: 核（小さな白い球）＋太陽と反対へ伸びる尾
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(1.2, 12, 8),
+    new THREE.MeshBasicMaterial({ color:0xddf6ff })
+  );
+  core.frustumCulled = false;
+  scene.add(core);
+  const TAIL_N = 24;
+  const tgeo = new THREE.BufferGeometry();
+  tgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TAIL_N*3), 3));
+  const tail = new THREE.Line(tgeo, cometTailMat);
+  tail.frustumCulled = false;
+  scene.add(tail);
+
+  comets.push({ p:pos, v:vel, a:new THREE.Vector3(), core, tail, tailN:TAIL_N });
+}
+
+// 彗星の描画更新（物理積分は stepPhysics 側で実施済み）。彗星は束縛軌道で
+// 周回し続けるため削除はしない（上限 COMET_MAX で発射を止める方式）。
+const _sunScene = new THREE.Vector3();
+function updateComets(){
+  if(comets.length === 0) return;
+  _sunScene.copy(toScene(state[0].p)); // 太陽のシーン位置
+  for(const c of comets){
+    const sp = toScene(c.p);
+    c.core.position.copy(sp);
+    // 尾: 太陽と反対方向へ、太陽に近いほど長く伸ばす
+    const awaySun = sp.clone().sub(_sunScene);
+    const sunDistAU = c.p.length()/AU;
+    const tailLen = Math.max(8, 90 / Math.max(0.3, sunDistAU)); // 近いほど長い
+    awaySun.normalize();
+    const arr = c.tail.geometry.attributes.position.array;
+    for(let i=0;i<c.tailN;i++){
+      const t = i/(c.tailN-1);
+      arr[i*3]   = sp.x + awaySun.x*tailLen*t;
+      arr[i*3+1] = sp.y + awaySun.y*tailLen*t;
+      arr[i*3+2] = sp.z + awaySun.z*tailLen*t;
+    }
+    c.tail.geometry.attributes.position.needsUpdate = true;
+  }
+}
+
+// 全彗星を削除（リセット時など）
+function clearComets(){
+  for(const c of comets){
+    scene.remove(c.core); scene.remove(c.tail);
+    c.core.geometry.dispose(); c.tail.geometry.dispose();
+  }
+  comets.length = 0;
+}
+
+document.getElementById('cometBtn').addEventListener('click', spawnComet);
+
+// ランダム飛来オプション。シミュレーション時間で平均約3年に1個のペース。
+let autoComet = false;
+const COMET_MEAN_INTERVAL = 3 * YEAR; // 平均発射間隔（シミュレーション秒）
+document.getElementById('autoComet').addEventListener('change', e=>{ autoComet = e.target.checked; });
+// このフレームで進んだシミュレーション秒に応じて確率的に発射する。
+function maybeSpawnComets(simAdvanceSec){
+  if(!autoComet || simAdvanceSec <= 0) return;
+  let expected = simAdvanceSec / COMET_MEAN_INTERVAL; // 期待発射数
+  // 整数部は確定発射、端数は確率発射（高速再生でもペースが保たれる）
+  let n = Math.floor(expected) + (Math.random() < (expected % 1) ? 1 : 0);
+  n = Math.min(n, 20); // 暴走防止
+  for(let i=0;i<n;i++) spawnComet();
+}
+
+// ============================================================
 // メインループ
 // ============================================================
 let lastTime = performance.now();
@@ -870,6 +994,7 @@ function animate(){
         for(let i=1;i<state.length;i++) updateTrail(i);
       }
     }
+    maybeSpawnComets(simAdvance); // ランダム飛来（順方向のみ）
   }
 
   // メッシュ位置更新 + 自転（太陽系原点系: 銀河変位を加えず原点付近に保つ）
@@ -900,6 +1025,8 @@ function animate(){
   // 過去点は太陽系の進行と逆に流れてらせんになる。
   const off = galaxyOffset();
   trailGroup.position.set(-off.x, -off.y, -off.z);
+
+  updateComets();
 
   controls.update();
   renderer.render(scene, camera);
