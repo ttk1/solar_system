@@ -26,6 +26,7 @@
   button:hover { background:#33406a; }
   #legend { margin-top:8px; font-size:11px; color:#bcd; }
   #legend span { display:inline-block; margin-right:8px; white-space:nowrap; }
+  #legend span:hover { text-decoration:underline; }   /* クリックで天体にフォーカスできる目印 */
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; vertical-align:middle; margin-right:3px; }
   #hint { position:absolute; bottom:10px; left:10px; color:#778; font-size:11px; z-index:10; }
   #fun { margin-top:10px; padding-top:8px; border-top:1px solid #3a4a72; }
@@ -969,7 +970,9 @@ document.getElementById('cometBtn').addEventListener('click', spawnComet);
 // ランダム飛来オプション。シミュレーション時間で平均約3年に1個のペース。
 let autoComet = false;
 const COMET_MEAN_INTERVAL = 3 * YEAR; // 平均発射間隔（シミュレーション秒）
-document.getElementById('autoComet').addEventListener('change', e=>{ autoComet = e.target.checked; });
+const autoCometCb = document.getElementById('autoComet');
+autoComet = autoCometCb.checked; // リロードで復元された状態に同期
+autoCometCb.addEventListener('change', e=>{ autoComet = e.target.checked; });
 // このフレームで進んだシミュレーション秒に応じて確率的に発射する。
 function maybeSpawnComets(simAdvanceSec){
   if(!autoComet || simAdvanceSec <= 0) return;
