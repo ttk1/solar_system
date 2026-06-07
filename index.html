@@ -121,7 +121,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // ============================================================
 // 物理定数
 // ============================================================
-const G = 6.674e-11;            // 万有引力定数 [m^3 kg^-1 s^-2]
+// 重力は G·m ではなく各天体の GM（重力パラメータ）を直接使うため、万有引力定数 G は
+// 物理計算には不要（GM は観測から高精度に決まる量で、G 単体より誤差が小さい）。
 const C_LIGHT = 2.99792458e8;  // 光速 [m/s]（一般相対論補正に使用）
 const AU = 1.495978707e11;      // 天文単位 [m]
 const DAY = 86400;              // 1日 [s]
@@ -141,11 +142,17 @@ const GALAXY_SPEED_RATIO = 220 / 29.8;      // 銀河公転速度 / 地球公転
 
 // ============================================================
 // 天体データ
-//  pos/vel: NASA/JPL HORIZONS から取得した元期
-//           (2026-01-01 00:00:00 TDB, JD 2461041.5) のヘリオセントリック
-//           (太陽中心) 状態ベクトル。座標系=黄道面・J2000.0（座標基準は J2000 のまま）。
-//           pos [AU], vel [AU/day]。
-//  mass: 質量 [kg]
+//  pos/vel: NASA/JPL HORIZONS (DE441) から取得した元期
+//           (2000-01-01 00:00:00 TDB, JD 2451544.5) の太陽系重心 (SSB) 基準
+//           状態ベクトル。座標系=黄道面・J2000.0。pos [AU], vel [AU/day]。
+//           太陽も SSB に対して動く（重心は全天体で決まる）点に注意。
+//  gm:   重力パラメータ GM [m^3/s^2]。質量 m × G ではなく GM を直接持つ。
+//        理由: N 体計算で必要なのは G·m_j の積で、観測から高精度に決まるのは
+//        GM のほう（G 単体・m 単体は不確かさが大きい）。惑星は「惑星系重心」の
+//        GM（本体＋衛星）を採用し衛星込みの運動を 1 質点で正確に表す。地球・月
+//        のみ個別本体の GM。出典 JPL DE440/DE441（km^3/s^2 を ×1e9 して m^3/s^2）。
+//  mass: 質量 [kg]（参考情報。重力計算には使わず gm を使う。現状コードからは
+//        参照していないが、各天体の素性を残す意味で保持している）
 //  radius: 表示用の見やすさ優先半径（実スケールではない）
 //  realRadiusKm: 実際の半径 [km]（「実スケール表示」用）
 //  color: 基本色
@@ -153,62 +160,107 @@ const GALAXY_SPEED_RATIO = 220 / 29.8;      // 銀河公転速度 / 地球公転
 //  tiltDeg: 赤道傾斜角 [度]（自転軸の傾き）。土星の環もこの傾きの赤道面に置く。
 // ============================================================
 const BODIES = [
-  { name:'太陽',     mass:1.98892e30, radius:12, realRadiusKm:696000, color:0xffcc33, emissive:true, rotHours:609.12, tiltDeg:7.25,
-    pos:[ 0, 0, 0], vel:[0,0,0] },
-  { name:'水星',     mass:3.3011e23,  radius:2.2, realRadiusKm:2440, color:0xa9a9a9, rotHours:1407.6, tiltDeg:0.03,
-    pos:[-2.152013043776677e-1,-4.092076157002721e-1,-1.370326959192366e-2],
-    vel:[ 1.923185228281169e-2,-1.173762627757566e-2,-2.723155925167729e-3] },
-  { name:'金星',     mass:4.8675e24,  radius:3.6, realRadiusKm:6052, color:0xe8c87a, rotHours:-5832.5, tiltDeg:177.4,
-    pos:[ 8.887724961635655e-2,-7.217623823170807e-1,-1.504405657506193e-2],
-    vel:[ 1.993856018796796e-2, 2.400365892738597e-3,-1.117471796465281e-3] },
+  { name:'太陽',     mass:1.98892e30, gm:1.32712440041279419e20, radius:12, realRadiusKm:696000, color:0xffcc33, emissive:true, rotHours:609.12, tiltDeg:7.25,
+    pos:[-7.139867342351966e-3,-2.792293024590130e-3, 2.063456515496323e-4],
+    vel:[ 5.374261984736907e-6,-7.410968933449048e-6,-9.423856739196387e-8] },
+  { name:'水星',     mass:3.3011e23,  gm:2.2031868551e13,         radius:2.2, realRadiusKm:2440, color:0xa9a9a9, rotHours:1407.6, tiltDeg:0.03,
+    pos:[-1.478679470531864e-1,-4.466932510516238e-1,-2.313921354816243e-2],
+    vel:[ 2.117424562091145e-2,-7.105386389490768e-3,-2.522925269286375e-3] },
+  { name:'金星',     mass:4.8675e24,  gm:3.2485859200e14,         radius:3.6, realRadiusKm:6052, color:0xe8c87a, rotHours:-5832.5, tiltDeg:177.4,
+    pos:[-7.257700842628457e-1,-2.529609371887610e-2, 4.137818693791793e-2],
+    vel:[ 5.189070091302415e-4,-2.031355259141011e-2,-3.072687586355490e-4] },
   // 地表テクスチャは Solar System Scope (CC BY 4.0) を同梱 — README にクレジット記載
-  { name:'地球',     mass:5.97237e24, radius:3.8, realRadiusKm:6371, color:0x2a6dd6, rotHours:23.9345, tiltDeg:23.44,
+  { name:'地球',     mass:5.97237e24, gm:3.9860043550702266e14,   radius:3.8, realRadiusKm:6371, color:0x2a6dd6, rotHours:23.9345, tiltDeg:23.44,
     textureUrl:'textures/2k_earth_daymap.jpg',
-    pos:[-1.742814809205833e-1, 9.677589202546031e-1,-5.944511017526243e-5],
-    vel:[-1.720454736868129e-2,-3.116607022544302e-3, 2.371782782240443e-7] },
+    pos:[-1.756645157282301e-1, 9.659910118824406e-1, 2.022251612712026e-4],
+    vel:[-1.722857157049219e-2,-3.015071218794761e-3,-5.861283850800269e-8] },
   // 月: 地球の運動(本体 vs 地球-月重心)を正しく扱うため質点として追加。moon:true で
   // 直列判定から除外し、トレイル間隔も地球周回に合わせて細かくする。同期回転(公転=自転)。
-  { name:'月',       mass:7.342e22,   radius:1.4, realRadiusKm:1737, color:0xb0b0b0, moon:true, rotHours:655.7, tiltDeg:6.68,
-    pos:[-1.733167230211788e-1, 9.699607953839370e-1, 1.528104265821843e-4],
-    vel:[-1.778458731904189e-2,-2.873537025181366e-3, 3.462907721246818e-6] },
-  { name:'火星',     mass:6.4171e23,  radius:2.8, realRadiusKm:3390, color:0xc1440e, rotHours:24.6229, tiltDeg:25.19,
-    pos:[ 3.405796768622151e-1,-1.387002015945254e0,-3.741722678770108e-2],
-    vel:[ 1.411941195403098e-2, 4.540203195240467e-3,-2.510853588872874e-4] },
-  { name:'木星',     mass:1.8982e27,  radius:9,  realRadiusKm:69911, color:0xd2a679, bands:true, rotHours:9.925, tiltDeg:3.13,
-    pos:[-1.694003692586729e0, 4.928882358715955e0, 1.742622062607817e-2],
-    vel:[-7.230928966261966e-3,-2.102446011794531e-3, 1.704614727867664e-4] },
-  { name:'土星',     mass:5.6834e26,  radius:8,  realRadiusKm:58232, color:0xe3d9a6, rings:true, rotHours:10.656, tiltDeg:26.73,
-    pos:[ 9.507341652288904e0, 2.577390400089007e-1,-3.829356818352184e-1],
-    vel:[-4.633613819838813e-4, 5.564050537818699e-3,-7.814125666158304e-5] },
-  { name:'天王星',   mass:8.6810e25,  radius:5.5, realRadiusKm:25362, color:0x9fdce3, rotHours:-17.24, tiltDeg:97.77,
-    pos:[ 9.880310929544422e0, 1.680001212340429e1,-6.571963922668925e-2],
-    vel:[-3.426473251407670e-3, 1.810411374683696e-3, 5.129072871848880e-5] },
-  { name:'海王星',   mass:1.02413e26, radius:5.3, realRadiusKm:24622, color:0x3f66c9, rotHours:16.11, tiltDeg:28.32,
-    pos:[ 2.987212043847291e1, 5.189395049681488e-1,-6.990674683244985e-1],
-    vel:[-8.194631238457794e-5, 3.156675675787226e-3,-6.342935922171079e-5] },
+  { name:'月',       mass:7.342e22,   gm:4.9028000661637961e12,   radius:1.4, realRadiusKm:1737, color:0xb0b0b0, moon:true, rotHours:655.7, tiltDeg:6.68,
+    pos:[-1.777878764405764e-1, 9.643741227174606e-1, 4.465857454550972e-4],
+    vel:[-1.690468993845242e-2,-3.477070757639961e-3,-1.005406895923388e-6] },
+  { name:'火星',     mass:6.4171e23,  gm:4.282837362069909e13,    radius:2.8, realRadiusKm:3390, color:0xc1440e, rotHours:24.6229, tiltDeg:25.19,
+    pos:[ 1.383221198696930e+0,-2.380201528263098e-2,-3.441166875780344e-2],
+    vel:[ 7.533013826049672e-4, 1.517888771847333e-2, 2.996589800130572e-4] },
+  { name:'木星',     mass:1.8982e27,  gm:1.266865319003704e17,    radius:9,  realRadiusKm:69911, color:0xd2a679, bands:true, rotHours:9.925, tiltDeg:3.13,
+    pos:[ 3.996320240617948e+0, 2.932561322812968e+0,-1.016166899919226e-1],
+    vel:[-4.558099055829463e-3, 6.439346910520061e-3, 7.536227172818839e-5] },
+  { name:'土星',     mass:5.6834e26,  gm:3.793120615901047e16,    radius:8,  realRadiusKm:58232, color:0xe3d9a6, rings:true, rotHours:10.656, tiltDeg:26.73,
+    pos:[ 6.401414860101278e+0, 6.565251849775630e+0,-3.689215367531211e-1],
+    vel:[-4.285745446165197e-3, 3.884169714004272e-3, 1.027825501934837e-4] },
+  { name:'天王星',   mass:8.6810e25,  gm:5.793951256527211e15,    radius:5.5, realRadiusKm:25362, color:0x9fdce3, rotHours:-17.24, tiltDeg:97.77,
+    pos:[ 1.442337762564843e+1,-1.373845004643807e+1,-2.379229549751449e-1],
+    vel:[ 2.683754231364985e-3, 2.665031702164245e-3,-2.487086513248259e-5] },
+  { name:'海王星',   mass:1.02413e26, gm:6.835103145462294e15,    radius:5.3, realRadiusKm:24622, color:0x3f66c9, rotHours:16.11, tiltDeg:28.32,
+    pos:[ 1.680361743975454e+1,-2.499544359984831e+1, 1.274771802323617e-1],
+    vel:[ 2.584743826368553e-3, 1.769358367628613e-3,-9.600326572966503e-5] },
 ];
 
-// 位置・速度を SI 単位 (m, m/s) に変換した状態ベクトル
-const state = BODIES.map(b => ({
+// 重力源としてのみ参加する摂動天体（冥王星＋主要小惑星）。描画・直列判定には
+// 出さず、太陽系の質量分布をより忠実にするために足す。DE441 などの高精度暦も
+// 小惑星を質点として含む。主要 4 個だけでは外惑星への寄与はごく小さい（本来は
+// 小惑星帯の数百個ぶんの連続質量が要る）が、冥王星を含め「より本物に近いモデル」
+// にする位置づけ。gm は m^3/s^2、pos/vel は 2000-01-01 SSB の AU, AU/day。
+const PERTURBERS = [
+  { name:'Pluto',  gm:9.755011621830380e11,
+    pos:[-9.884006460487134e+0,-2.796081998964971e+1, 5.851008355643481e+0],
+    vel:[ 3.034076299948153e-3,-1.545343061016808e-3,-7.122656089324716e-4] },
+  { name:'Ceres',  gm:6.26284e10,
+    pos:[-2.384670160017479e+0, 7.979849433467894e-1, 4.630439590237156e-1],
+    vel:[-3.600047968504067e-3,-1.058624433538979e-2, 3.378848061265286e-4] },
+  { name:'Vesta',  gm:1.728828e10,
+    pos:[-1.365527753318191e+0,-1.672221471290490e+0, 2.155802232419442e-1],
+    vel:[ 9.610352589661171e-3,-7.434583262277168e-3,-9.426532268841708e-4] },
+  { name:'Pallas', gm:1.363e10,
+    pos:[-8.424063924047979e-1, 1.653001909633650e+0,-1.075587845059179e+0],
+    vel:[-1.174474843421834e-2,-4.104535510998074e-3, 3.801225226581635e-3] },
+  { name:'Hygiea', gm:7.0e9,
+    pos:[-2.384253191822651e+0,-1.461885924698006e+0,-1.780903340597545e-1],
+    vel:[ 6.099000124059932e-3,-8.966636323506472e-3, 2.554707610148175e-4] },
+];
+
+// 重力計算に参加する全天体（可視 BODIES ＋ 非可視 PERTURBERS）。描画ループは
+// 先頭の BODIES.length 個（= 可視天体）だけを回す。N_VISIBLE がその境界。
+const ALL_BODIES = BODIES.concat(PERTURBERS);
+const N_VISIBLE = BODIES.length;
+
+// 位置・速度を SI 単位 (m, m/s) に変換した状態ベクトル。
+// 重力計算は gm（GM, m^3/s^2）を使う。
+const state = ALL_BODIES.map(b => ({
   name: b.name,
-  mass: b.mass,
-  p: new THREE.Vector3(b.pos[0]*AU, b.pos[1]*AU, b.pos[2]*AU),
-  v: new THREE.Vector3(b.vel[0]*AU/DAY, b.vel[1]*AU/DAY, b.vel[2]*AU/DAY),
+  gm: b.gm,                // 重力パラメータ GM [m^3/s^2]（重力計算はこれを使う）
+  p: new THREE.Vector3(),
+  v: new THREE.Vector3(),
   a: new THREE.Vector3(),
 }));
 
-// 系全体の運動量がゼロになるよう太陽の速度を補正（重心を静止させる）
-(function balanceMomentum(){
-  const totalP = new THREE.Vector3();
-  for(const s of state) totalP.addScaledVector(s.v, s.mass);
-  // 太陽(index0)で相殺
-  state[0].v.addScaledVector(totalP, -1/state[0].mass);
-})();
+// 全系の重心の位置・速度をゼロにする（SSB 静止系へ）。入力は既に SSB だが、
+// 桁落ち・データ丸めで残る微小ドリフトを除去して長期計算の基準を安定させる。
+// 重み付けは GM（質量に比例）。
+function removeBarycenterDrift(){
+  let totGm = 0;
+  const c = new THREE.Vector3(), cv = new THREE.Vector3();
+  for(const s of state){ totGm += s.gm; c.addScaledVector(s.p, s.gm); cv.addScaledVector(s.v, s.gm); }
+  c.multiplyScalar(1/totGm); cv.multiplyScalar(1/totGm);
+  for(const s of state){ s.p.sub(c); s.v.sub(cv); }
+}
+
+// 全天体を元期の状態ベクトルへ戻す（初期化・リセット共通）。摂動天体も含めて
+// 戻すので、リセット後も外惑星の摂動が正しく効く。
+function initState(){
+  for(let i=0;i<ALL_BODIES.length;i++){
+    const b = ALL_BODIES[i];
+    state[i].p.set(b.pos[0]*AU, b.pos[1]*AU, b.pos[2]*AU);
+    state[i].v.set(b.vel[0]*AU/DAY, b.vel[1]*AU/DAY, b.vel[2]*AU/DAY);
+  }
+  removeBarycenterDrift();
+}
+initState();
 
 // ============================================================
 // シミュレーション設定
 // ============================================================
-const EPOCH = new Date(Date.UTC(2026,0,1,0,0,0)); // 元期 2026-01-01 00:00 TDB (≈UTC)
+const EPOCH = new Date(Date.UTC(2000,0,1,0,0,0)); // 元期 2000-01-01 00:00 TDB (≈UTC), JD 2451544.5
 let simSeconds = 0;          // 経過シミュレーション秒
 let running = true;
 let yearsPerSecond = 1.0;    // 実時間1秒あたりのシミュレーション年数
@@ -243,7 +295,8 @@ function addSunGR(p, v, accOut){
   if(r2 === 0) return;
   _grV.subVectors(v, sun.v);          // 太陽に対する相対速度
   const r = Math.sqrt(r2);
-  const GM = G * gMul * sun.mass * sunMassMul;
+  // 太陽の実効 GM（面白機能の倍率を反映）。重力計算と同じ定義を使う。
+  const GM = sun.gm * gMul * sunMassMul;
   const v2 = _grV.lengthSq();
   const rDotV = _grR.dot(_grV);
   const k = GM / (C_LIGHT*C_LIGHT * r2 * r); // GM/(c^2 r^3)
@@ -252,7 +305,9 @@ function addSunGR(p, v, accOut){
   accOut.addScaledVector(_grV, k * 4 * rDotV);
 }
 
-// 加速度計算（ニュートン重力, 瞬時作用 ＋ 太陽の一般相対論補正）
+// 加速度計算（ニュートン重力, 瞬時作用 ＋ 太陽の一般相対論補正）。
+// 重力は質量×G ではなく各天体の GM（重力パラメータ）を直接使う。観測から
+// 高精度に決まる量なので、G と m を別々に持つより誤差が小さい。
 const tmp = new THREE.Vector3();
 function computeAccelerations(){
   for(const s of state) s.a.set(0,0,0);
@@ -265,9 +320,9 @@ function computeAccelerations(){
       const r2 = tmp.lengthSq();
       if(r2 === 0) continue;
       const r = Math.sqrt(r2);
-      // 面白機能の倍率: G に gMul、太陽(index 0)の質量に sunMassMul を掛ける
-      const m = (j === 0) ? sj.mass * sunMassMul : sj.mass;
-      const f = G * gMul * m / r2;
+      // 面白機能の倍率: 全 GM に gMul、太陽(index 0)の GM に sunMassMul を掛ける
+      const gmj = (j === 0) ? sj.gm * sunMassMul : sj.gm;
+      const f = gMul * gmj / r2;
       si.a.addScaledVector(tmp, f / r);
     }
     // 太陽以外の天体に GR 補正を加える（太陽自身 i=0 には加えない）
@@ -282,8 +337,8 @@ function computeAccelerations(){
       const r2 = tmp.lengthSq();
       if(r2 === 0) continue;
       const r = Math.sqrt(r2);
-      const m = (j === 0) ? sj.mass * sunMassMul : sj.mass;
-      const f = G * gMul * m / r2;
+      const gmj = (j === 0) ? sj.gm * sunMassMul : sj.gm;
+      const f = gMul * gmj / r2;
       cmt.a.addScaledVector(tmp, f / r);
     }
     addSunGR(cmt.p, cmt.v, cmt.a); // 彗星にも太陽 GR 補正
@@ -358,7 +413,8 @@ const SCALE = 48;
 function toScene(v){ return new THREE.Vector3(v.x/AU*SCALE, v.z/AU*SCALE, -v.y/AU*SCALE); }
 
 // 地球の自転位相オフセット[rad]。昼夜が日時に合うよう調整（画面のつまみで調整可）。
-// 元期 2026-01-01 00:00（旧 2000-01-01 12:00 から時刻が12h≒180°ずれたぶん +180° 補正）。
+// 元期 2000-01-01 00:00 TDB を基準とした既定値。厳密な恒星時の再現が目的ではなく、
+// 見た目の昼夜を日時感覚に合わせるためのもの（必要なら画面のつまみで微調整できる）。
 let EARTH_PHASE0 = 90 * Math.PI / 180;
 
 // 地球の自転軸（慣性空間で固定、シーン座標の単位ベクトル）。
@@ -709,7 +765,7 @@ function updateDate(){
   const da = String(d.getUTCDate()).padStart(2,'0');
   dateEl.textContent = `${y}年${mo}月${da}日`;
   const years = simSeconds/YEAR;
-  elapsedEl.textContent = `元期(2026年)から ${years>=0?'+':''}${years.toFixed(2)} 年`;
+  elapsedEl.textContent = `元期(2000年)から ${years>=0?'+':''}${years.toFixed(2)} 年`;
 }
 
 // ============================================================
@@ -761,15 +817,7 @@ pauseBtn.addEventListener('click', ()=>{
 });
 
 document.getElementById('reset').addEventListener('click', ()=>{
-  // 状態を初期化
-  BODIES.forEach((b,i)=>{
-    state[i].p.set(b.pos[0]*AU, b.pos[1]*AU, b.pos[2]*AU);
-    state[i].v.set(b.vel[0]*AU/DAY, b.vel[1]*AU/DAY, b.vel[2]*AU/DAY);
-  });
-  // 運動量再補正
-  const totalP=new THREE.Vector3();
-  for(const s of state) totalP.addScaledVector(s.v, s.mass);
-  state[0].v.addScaledVector(totalP, -1/state[0].mass);
+  initState();   // 全天体（摂動天体含む）を元期の状態へ戻し、重心ドリフトも除去
   simSeconds = 0;
   catchup = null;
   focusIndex = null;
@@ -820,12 +868,15 @@ document.getElementById('gotoBtn').addEventListener('click', ()=>{
 // 集まる程度（最小spreadは約62°/≈160年後）。やや緩めの90°で「ゆるい直列」を拾う。
 const ALIGN_THRESHOLD = 90 * Math.PI / 180;
 
-// 全惑星(太陽・月を除く)の黄経が収まる最小弧[rad]。小さいほど直列。
+// 全惑星(太陽・月・摂動天体を除く)の黄経が収まる最小弧[rad]。小さいほど直列。
+// 黄経は太陽中心（地球から見た直列の感覚に合わせる）。state は SSB 基準なので
+// 太陽位置を引いてから atan2 する。摂動天体(冥王星・小惑星)は判定に入れない。
 function alignmentSpread(){
+  const sun = state[0].p;
   const ang = [];
-  for(let i=1;i<state.length;i++){
+  for(let i=1;i<N_VISIBLE;i++){
     if(BODIES[i].moon) continue; // 月は惑星ではないので直列判定から除外
-    ang.push(Math.atan2(state[i].p.y, state[i].p.x));
+    ang.push(Math.atan2(state[i].p.y - sun.y, state[i].p.x - sun.x));
   }
   ang.sort((a,b)=>a-b);
   let maxGap = (ang[0] + 2*Math.PI) - ang[ang.length-1]; // wrap ギャップ
@@ -1017,7 +1068,7 @@ function spawnComet(){
   const dir = new THREE.Vector3(Math.cos(th), Math.sin(th), zTilt).normalize();
   const pos = dir.clone().multiplyScalar(rApo);
   // 遠日点での速度（vis-viva）。方向は黄道面内で位置に垂直な接線。
-  const GM = G * gMul * BODIES[0].mass * sunMassMul;
+  const GM = BODIES[0].gm * gMul * sunMassMul;
   const vMag = Math.sqrt(Math.max(0, GM * (2/rApo - 1/a)));
   const up = new THREE.Vector3(0,0,1);
   let tangent = new THREE.Vector3().crossVectors(up, dir);
@@ -1212,7 +1263,7 @@ function animate(){
         plotsDone++;
         // 通常は太陽(i=0)を除外（原点に溜まるだけ）。銀河公転モードでは太陽系全体が
         // 動くので太陽の軌跡も描く。
-        for(let i = galaxyMode ? 0 : 1; i<state.length; i++) updateTrail(i);
+        for(let i = galaxyMode ? 0 : 1; i<N_VISIBLE; i++) updateTrail(i);
       }
     }
     maybeSpawnComets(simAdvance); // ランダム飛来（順方向のみ）
@@ -1221,7 +1272,7 @@ function animate(){
   // メッシュ位置更新 + 自転（太陽系原点系: 銀河変位を加えず原点付近に保つ）
   // 自転はシミュレーション経過時間と実自転周期に連動（速度を遅めると自転も遅くなる）。
   // 角度は 0〜2π に剰余を取り、大きな simSeconds でも精度を保つ。
-  for(let i=0;i<state.length;i++){
+  for(let i=0;i<N_VISIBLE;i++){
     pivots[i].position.copy(toScene(state[i].p)); // 位置は pivot に（mesh は pivot 中心）
     // 自転角: 恒星日に基づく。負の rotHours は逆行。剰余で 0〜2π に収め精度を保つ。
     const turns = simSeconds / (BODIES[i].rotHours * 3600);
@@ -1268,7 +1319,7 @@ function animate(){
   // ラベル位置をスクリーン座標へ投影（pivot=天体のワールド位置）。
   // カメラから遠い天体ほど薄くして、引いたとき/奥の天体のラベルの重なりを軽減。
   // 「天体名を表示」オフのときは投影計算ごとスキップ（隠すのは change ハンドラで実施済み）。
-  if(showLabels) for(let i=0;i<state.length;i++){
+  if(showLabels) for(let i=0;i<N_VISIBLE;i++){
     // 月は実スケール表示のときだけ見せる（誇張表示では本体ごと非表示）
     if(BODIES[i].moon && !realSize){ labelEls[i].style.display='none'; continue; }
     _v.copy(pivots[i].position).project(camera);
