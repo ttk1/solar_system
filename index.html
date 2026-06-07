@@ -644,6 +644,14 @@ function setSpeedToRealtime(){
   speedSlider.value = Math.log10(1 / YEAR); // ≈ -7.5
   applySpeed();
 }
+// 早送り(キャッチアップ)を開始する共通処理。開始時にトレイルをクリアして、
+// 移動前の軌跡が移動後と混ざらないようにする。
+function startCatchup(target, onArrive){
+  clearTrails();
+  catchup = { target, onArrive };
+  running = true;
+  pauseBtn.textContent = '⏸ 一時停止';
+}
 const nowBtn = document.getElementById('now');
 nowBtn.addEventListener('click', ()=>{
   if(simSeconds >= nowSimSeconds()){
@@ -651,9 +659,7 @@ nowBtn.addEventListener('click', ()=>{
     return;
   }
   // 目標は移動し続ける現在時刻。到達したら等倍(実時間追従)へ。
-  catchup = { target: nowSimSeconds, onArrive: setSpeedToRealtime };
-  running = true;
-  pauseBtn.textContent = '⏸ 一時停止';
+  startCatchup(nowSimSeconds, setSpeedToRealtime);
 });
 
 // 指定日付へ移動（過去なら逆回し）。到達したら一時停止。
@@ -662,11 +668,7 @@ document.getElementById('gotoBtn').addEventListener('click', ()=>{
   if(!gotoDate.value) return; // 未入力
   const [y,m,d] = gotoDate.value.split('-').map(Number);
   const targetT = dateToSimSeconds(new Date(Date.UTC(y, m-1, d, 12, 0, 0)));
-  catchup = { target: ()=>targetT, onArrive: ()=>{
-    running = false; pauseBtn.textContent = '▶ 再生';
-  }};
-  running = true;
-  pauseBtn.textContent = '⏸ 一時停止';
+  startCatchup(()=>targetT, ()=>{ running = false; pauseBtn.textContent = '▶ 再生'; });
 });
 
 // ----- 惑星直列（このシミュレーション内で実際に集まる瞬間を計算で探す） -----
@@ -736,7 +738,7 @@ alignBtn.addEventListener('click', ()=>{
     const targetT = findNextAlignment();
     alignBtn.disabled = false;
     if(targetT == null){ alignTempLabel('🪐 直列が見つかりません'); return; }
-    catchup = { target: ()=>targetT, onArrive: ()=>{
+    startCatchup(()=>targetT, ()=>{
       running = false; pauseBtn.textContent = '▶ 再生'; // 直列の瞬間で一時停止
       const d = new Date(EPOCH.getTime() + targetT*1000);
       const deg = Math.round(alignmentSpread() * 180 / Math.PI);
@@ -749,9 +751,7 @@ alignBtn.addEventListener('click', ()=>{
           + `${String(d.getUTCMonth()+1).padStart(2,'0')}月${String(d.getUTCDate()).padStart(2,'0')}日`
           + `（${deg}°）`;
       }
-    }};
-    running = true;
-    pauseBtn.textContent = '⏸ 一時停止';
+    });
   }, 30);
 });
 const ALIGN_BTN_LABEL = '🪐 次の惑星直列へ';
