@@ -459,6 +459,10 @@ const TRAIL_MAX = 1500;
 // シミュレーション速度を変えてもトレイルの長さがほぼ一定に保たれる（等倍付近で
 // 消えなくなる）。保持される総長 ≈ TRAIL_SEG × TRAIL_MAX [units]。
 const TRAIL_SEG = 0.3;
+// 1フレームに打つトレイル点の上限。高速早送りでサブステップが数千になっても、点間隔は
+// TRAIL_SEG で頭打ちのため大量に打っても見た目に寄与せず、updateTrail(全頂点コピー)の
+// コストだけ増える。上限を設けて負荷を抑える(これ以上はトレイルが一瞬で全更新される)。
+const TRAIL_PLOTS_MAX = 64;
 
 // トレイル専用グループ。銀河公転モードでは毎フレーム位置を -galaxyDisp にして、
 // 「太陽系基準で過去点が後ろに流れる」=らせんを表現する。グループ内のトレイル点は
@@ -1066,7 +1070,6 @@ function focusOn(i){
 // メインループ
 // ============================================================
 let lastTime = performance.now();
-let trailTimer = 0;
 const _v = new THREE.Vector3();
 const _focusDelta = new THREE.Vector3();
 
@@ -1109,24 +1112,36 @@ function animate(){
       steps = Math.min(Math.ceil(absAdv / PHYS_DT), 10000);
       dt = simAdvance / steps;
     }
+    // このフレームでトレイル点を打つ回数。等倍付近では「4サブステップに1回」を保つが、
+    // 高速早送り時はサブステップ数が膨大になり、毎回 updateTrail(全頂点コピー)を呼ぶと
+    // 重く、かつ点間隔も TRAIL_SEG で頭打ちになり見た目に寄与しない。そこで1フレーム
+    // あたりの打点回数を TRAIL_PLOTS_MAX で頭打ちにし、ステップ全体へ等間隔に配る。
+    let plotsThisFrame = 0;
+    if(showTrails && steps > 0){
+      plotsThisFrame = Math.min(Math.ceil(steps / 4), TRAIL_PLOTS_MAX);
+      // 点を打つ直前にトレイル基準原点をこのフレームの基準へ寄せる(フレーム1回)。
+      // 基準は「格納頂点を原点付近(小さい値)に保つ」ためのもの:
+      //  - フォーカス中  : その天体の近傍 → 実スケールで寄っても float32 が天体半径より
+      //                     細かく、稲妻状のギザギザが出ない(tol=0で厳密追従)。
+      //  - フォーカスなし: galaxyOffset() に追従 → 銀河 galaxyDisp が数百万 units まで
+      //                     膨らんでも格納値 ≈ 原点付近に保たれ、階段状のカクつきが出ない。
+      //                     フレーム内の galaxyDisp の振れ幅(高速でも ~数万 units)では
+      //                     精度 ~数e-3 units で TRAIL_SEG(0.3)に対し十分なので毎フレ1回でよい。
+      if(focusIndex != null) rebaseTrails(toSceneGalaxy(state[focusIndex].p));
+      else rebaseTrails(galaxyOffset(), 200);
+    }
+    // plotsThisFrame 個の打点を steps 個のサブステップへ等間隔に割り当てる。
+    // j 番目(1..plotsThisFrame)の打点を k = round(j*steps/plotsThisFrame)-1 で行い、
+    // 最後の打点が必ず k=steps-1(=最新)に来るようにする。
+    let plotsDone = 0;
     for(let k=0;k<steps;k++){
       stepPhysics(dt);
       // 銀河公転変位を積算。updateTrail は galaxyOffset を参照するので先に進める。
       advanceGalaxy(dt / YEAR);
-      trailTimer++;
-      if(showTrails && (trailTimer % 4 === 0)){
-        // 点を打つ直前にトレイル基準原点を更新する。基準は「格納頂点を原点付近(小さい値)
-        // に保つ」ためのもの:
-        //  - フォーカス中  : その天体の近傍 → 実スケールで寄っても float32 が天体半径より
-        //                     細かく、稲妻状のギザギザが出ない。
-        //  - フォーカスなし: galaxyOffset() に追従 → 銀河公転で galaxyDisp が数百万 units
-        //                     まで膨らんでも、格納値 = world − trailRef ≈ 原点付近に保たれる。
-        //                     これをしないと高速早送り時に galaxyDisp が巨大→float32 量子化
-        //                     (>TRAIL_SEG)で軌跡が階段状にカクつく。
-        //  サブステップ内で打つ瞬間に rebase することで、高速時にフレーム内で galaxyDisp が
-        //  大きく動いても各点の格納値が小さく保たれる。
-        if(focusIndex != null) rebaseTrails(toSceneGalaxy(state[focusIndex].p)); // tol=0: 厳密追従
-        else rebaseTrails(galaxyOffset(), 200); // 全体表示: 200units以内ならスキップ(精度~2e-5)
+      // 残り打点数に対し、このサブステップが割り当て境界に達したら打つ。
+      if(plotsDone < plotsThisFrame &&
+         (k+1) >= Math.round((plotsDone+1) * steps / plotsThisFrame)){
+        plotsDone++;
         // 通常は太陽(i=0)を除外（原点に溜まるだけ）。銀河公転モードでは太陽系全体が
         // 動くので太陽の軌跡も描く。
         for(let i = galaxyMode ? 0 : 1; i<state.length; i++) updateTrail(i);
