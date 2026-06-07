@@ -631,8 +631,8 @@ nowBtn.addEventListener('click', ()=>{
 // 簡易積分のため固定日付（実暦の2161年など）では誤差で直列にならない。そこで
 // 「全惑星の黄経がある弧の中に収まる」最初の瞬間をシミュレーションを先送りして探す。
 // この弧以内に全惑星が収まれば直列とみなす。実際の「フル直列」でも8惑星は約69°に
-// 集まる程度で、本シミュレーションでも最小 spread は約62°（≈160年後）。65°に設定。
-const ALIGN_THRESHOLD = 65 * Math.PI / 180;
+// 集まる程度（最小spreadは約62°/≈160年後）。やや緩めの90°で「ゆるい直列」を拾う。
+const ALIGN_THRESHOLD = 90 * Math.PI / 180;
 
 // 全惑星(太陽除く)の黄経が収まる最小弧[rad]。小さいほど直列。
 function alignmentSpread(){
@@ -666,10 +666,17 @@ function findNextAlignment(){
   const maxSteps = Math.ceil(MAX_YEARS * YEAR / SCAN_DT);
   let found = null;
   let wasAligned = alignmentSpread() <= ALIGN_THRESHOLD; // 開始時すでに直列なら一旦抜けるまで待つ
+  let inEvent = false, bestSpread = Infinity, bestT = 0;
   for(let k=0;k<maxSteps;k++){
     stepPhysics(SCAN_DT);
-    const aligned = alignmentSpread() <= ALIGN_THRESHOLD;
-    if(aligned && !wasAligned){ found = simSeconds; break; }
+    const sp = alignmentSpread();
+    const aligned = sp <= ALIGN_THRESHOLD;
+    if(aligned && !wasAligned) inEvent = true; // 集まりイベント開始
+    if(inEvent){
+      // イベント中は最も集まった瞬間(spread極小)を記録し続ける
+      if(sp < bestSpread){ bestSpread = sp; bestT = simSeconds; }
+      if(!aligned){ found = bestT; break; } // 閾値を抜けたら極小点で確定
+    }
     wasAligned = aligned;
   }
   restoreState(snap);
@@ -688,10 +695,12 @@ alignBtn.addEventListener('click', ()=>{
     if(targetT == null){ alignBtn.textContent = '🪐 直列が見つかりません'; return; }
     catchup = { target: ()=>targetT, onArrive: ()=>{
       running = false; pauseBtn.textContent = '▶ 再生'; // 直列の瞬間で一時停止
-      // 飛んだ先（直列）の日付をボタンに表示
+      // 飛んだ先（直列）の日付と、そのときの集まり角度(spread)をボタンに表示
       const d = new Date(EPOCH.getTime() + targetT*1000);
+      const deg = Math.round(alignmentSpread() * 180 / Math.PI);
       alignBtn.textContent = `🪐 直列 ${d.getUTCFullYear()}年`
-        + `${String(d.getUTCMonth()+1).padStart(2,'0')}月${String(d.getUTCDate()).padStart(2,'0')}日`;
+        + `${String(d.getUTCMonth()+1).padStart(2,'0')}月${String(d.getUTCDate()).padStart(2,'0')}日`
+        + `（${deg}°）`;
     }};
     running = true;
     pauseBtn.textContent = '⏸ 一時停止';
