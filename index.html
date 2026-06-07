@@ -122,6 +122,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // 物理定数
 // ============================================================
 const G = 6.674e-11;            // 万有引力定数 [m^3 kg^-1 s^-2]
+const C_LIGHT = 2.99792458e8;  // 光速 [m/s]（一般相対論補正に使用）
 const AU = 1.495978707e11;      // 天文単位 [m]
 const DAY = 86400;              // 1日 [s]
 const YEAR = 365.25 * DAY;      // 1年 [s]
@@ -222,7 +223,30 @@ let focusIndex = null;       // カメラ中心にする天体の index（null=�
 // Yoshida 4次が高精度なため、これでエネルギー誤差はほぼ倍精度の限界(~9e-15)。
 const PHYS_DT = 0.05 * DAY;
 
-// 加速度計算（ニュートン重力, 瞬時作用）
+// 太陽による一般相対論(1PN, Schwarzschild)補正加速度を accOut に加える。
+//   a_GR = GM/(c^2 r^3) [ (4GM/r − v^2) r + 4(r·v) v ]
+// r,v は太陽中心から見た相対位置・速度。水星の近日点移動(43″/世紀)を再現する標準形。
+// 太陽項が支配的なので太陽のみ考慮（外惑星への寄与は無視できる）。面白機能の倍率
+// gMul/sunMassMul とも整合させる。
+const _grR = new THREE.Vector3();
+const _grV = new THREE.Vector3();
+function addSunGR(p, v, accOut){
+  const sun = state[0];
+  _grR.subVectors(p, sun.p);          // 太陽中心からの相対位置
+  const r2 = _grR.lengthSq();
+  if(r2 === 0) return;
+  _grV.subVectors(v, sun.v);          // 太陽に対する相対速度
+  const r = Math.sqrt(r2);
+  const GM = G * gMul * sun.mass * sunMassMul;
+  const v2 = _grV.lengthSq();
+  const rDotV = _grR.dot(_grV);
+  const k = GM / (C_LIGHT*C_LIGHT * r2 * r); // GM/(c^2 r^3)
+  // accOut += k[(4GM/r − v^2) r + 4(r·v) v]
+  accOut.addScaledVector(_grR, k * (4*GM/r - v2));
+  accOut.addScaledVector(_grV, k * 4 * rDotV);
+}
+
+// 加速度計算（ニュートン重力, 瞬時作用 ＋ 太陽の一般相対論補正）
 const tmp = new THREE.Vector3();
 function computeAccelerations(){
   for(const s of state) s.a.set(0,0,0);
@@ -240,6 +264,8 @@ function computeAccelerations(){
       const f = G * gMul * m / r2;
       si.a.addScaledVector(tmp, f / r);
     }
+    // 太陽以外の天体に GR 補正を加える（太陽自身 i=0 には加えない）
+    if(i !== 0) addSunGR(si.p, si.v, si.a);
   }
   // 彗星(test particle): 全天体から重力を受ける。惑星側へは影響しない。
   for(const cmt of comets){
@@ -254,6 +280,7 @@ function computeAccelerations(){
       const f = G * gMul * m / r2;
       cmt.a.addScaledVector(tmp, f / r);
     }
+    addSunGR(cmt.p, cmt.v, cmt.a); // 彗星にも太陽 GR 補正
   }
 }
 
