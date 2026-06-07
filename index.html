@@ -42,6 +42,9 @@
     <button id="pause">⏸ 一時停止</button>
     <button id="reset">↺ リセット</button>
   </div>
+  <div class="row" style="margin-top:6px;">
+    <button id="now" style="width:100%;">⏩ 現在へ早送り</button>
+  </div>
   <label class="row" style="margin-top:8px;">
     <span>重力伝播遅延（光速）</span>
     <input type="checkbox" id="delay" checked>
@@ -164,6 +167,7 @@ let running = true;
 let yearsPerSecond = 1.0;    // 実時間1秒あたりのシミュレーション年数
 let useDelay = true;         // 重力伝播遅延
 let showTrails = true;
+let catchingUp = false;      // 「現在へ早送り」中フラグ
 
 // 物理積分の固定ステップ（シミュレーション秒）。1ステップ = 0.5日
 const PHYS_DT = 0.5 * DAY;
@@ -256,6 +260,12 @@ controls.dampingFactor = 0.08;
 // 画面スケール: 1 AU = SCALE three.js units
 const SCALE = 40;
 function toScene(v){ return new THREE.Vector3(v.x/AU*SCALE, v.z/AU*SCALE, -v.y/AU*SCALE); }
+
+// 地球テクスチャの経度0とメッシュ向きのズレを吸収する位相オフセット。
+// 昼夜が日時とそれっぽく合うよう見た目で調整する値（後付け調整用）。
+// リセット直後(2000-01-01 12:00 UT)に西経~80°(パナマ)が太陽を向いていたので、
+// 経度0(ギニア湾)が太陽直下に来るよう約 -80° 補正。符号がズレる場合は反転して調整。
+const EARTH_PHASE0 = -80 * Math.PI / 180;
 
 // 銀河公転モード（太陽系原点系）
 let galaxyMode = false;
@@ -568,8 +578,28 @@ document.getElementById('reset').addEventListener('click', ()=>{
   for(const s of state) totalP.addScaledVector(s.v, s.mass);
   state[0].v.addScaledVector(totalP, -1/state[0].mass);
   simSeconds = 0;
+  catchingUp = false;
   clearTrails();
   pushHistory(); computeAccelerations();
+});
+
+// 現在(wall-clock)に対応するシミュレーション秒
+function nowSimSeconds(){ return (Date.now() - EPOCH.getTime()) / 1000; }
+// 速度スライダーを等倍(実時間と同速)にセット
+function setSpeedToRealtime(){
+  speedSlider.value = Math.log10(1 / YEAR); // ≈ -7.5
+  applySpeed();
+}
+const nowBtn = document.getElementById('now');
+nowBtn.addEventListener('click', ()=>{
+  if(simSeconds >= nowSimSeconds()){
+    // すでに現在以降にいる場合は等倍へ切り替えるだけ
+    setSpeedToRealtime();
+    return;
+  }
+  catchingUp = true;
+  running = true;
+  pauseBtn.textContent = '⏸ 一時停止';
 });
 
 document.getElementById('delay').addEventListener('change', e=>{ useDelay = e.target.checked; });
@@ -625,7 +655,22 @@ function animate(){
 
   if(running){
     // このフレームで進めるべきシミュレーション秒数
-    const simAdvance = realDt * yearsPerSecond * YEAR;
+    let simAdvance;
+    if(catchingUp){
+      // 現在(wall-clock)まで高速で詰める。残りに比例した速度で ease-out 的に進め、
+      // 到達したらピタッと止めて等倍(実時間追従)へ切り替える。
+      const remaining = nowSimSeconds() - simSeconds; // 秒
+      if(remaining <= 0){
+        simAdvance = 0; catchingUp = false; setSpeedToRealtime();
+      } else {
+        const remYears = remaining / YEAR;
+        const yps = Math.min(Math.max(remYears / 4, 2), 500); // 約4秒で到達、上下限あり
+        simAdvance = Math.min(realDt * yps * YEAR, remaining);
+        if(simAdvance >= remaining){ catchingUp = false; setSpeedToRealtime(); }
+      }
+    } else {
+      simAdvance = realDt * yearsPerSecond * YEAR;
+    }
     // PHYS_DT(0.5日)は1ステップの上限。遅いときは可変dtで滑らかに（等倍まで対応）、
     // 速いときは PHYS_DT 刻みに分割しつつ1フレーム最大2000ステップでクランプ。
     let steps, dt;
@@ -653,9 +698,21 @@ function animate(){
   // 角度は 0〜2π に剰余を取り、大きな simSeconds でも精度を保つ。
   for(let i=0;i<state.length;i++){
     pivots[i].position.copy(toScene(state[i].p)); // 位置は pivot に（mesh は pivot 中心）
-    const periodSec = BODIES[i].rotHours * 3600;  // 負値=逆行
-    const turns = simSeconds / periodSec;
-    meshes[i].rotation.y = (turns - Math.floor(turns)) * 2 * Math.PI;
+    if(BODIES[i].textureUrl){
+      // 地球（実テクスチャ）は昼夜を日時にそれっぽく同期させる（近似）。
+      // 太陽方向の方位角 + その時刻の太陽直下経度 で位相を決めるので、
+      // 「だいたいその日時に正しい経度が昼になる」。均時差・章動などは無視。
+      const sx = toScene(state[0].p), ex = pivots[i].position;
+      const az = Math.atan2(sx.x - ex.x, sx.z - ex.z); // 地球→太陽 の方位角
+      // EPOCH(2000-01-01 12:00 UT)基準の世界時。UT=12:00 で経度0が太陽直下。
+      const utHours = ((12 + (simSeconds / DAY) * 24) % 24 + 24) % 24;
+      const subsolarLon = Math.PI - (utHours / 24) * 2 * Math.PI;
+      meshes[i].rotation.y = az - subsolarLon + EARTH_PHASE0;
+    } else {
+      const periodSec = BODIES[i].rotHours * 3600;  // 負値=逆行
+      const turns = simSeconds / periodSec;
+      meshes[i].rotation.y = (turns - Math.floor(turns)) * 2 * Math.PI;
+    }
   }
   // 太陽光源を太陽位置へ
   sunLight.position.copy(pivots[0].position);
