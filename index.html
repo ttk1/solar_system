@@ -57,6 +57,16 @@
     <span>銀河公転モード</span>
     <input type="checkbox" id="galaxy">
   </label>
+  <details id="earthTune" style="margin-top:8px;">
+    <summary style="cursor:pointer;color:#9ab;font-size:12px;">地球 自転軸の調整</summary>
+    <label>自転位相 <span class="small" id="phaseVal"></span>
+      <input type="range" id="earthPhase" min="-180" max="180" step="1">
+    </label>
+    <label>軸の向き（黄経） <span class="small" id="axisVal"></span>
+      <input type="range" id="earthAxis" min="0" max="360" step="1">
+    </label>
+    <div class="small">合った値をソースの EARTH_PHASE0 / EARTH_AXIS_LON に焼き込めます</div>
+  </details>
   <div id="legend"></div>
 </div>
 <div id="hint">マウス: 左ドラッグ=回転 / 右ドラッグ=移動 / ホイール=拡大縮小</div>
@@ -262,11 +272,27 @@ controls.dampingFactor = 0.08;
 const SCALE = 48;
 function toScene(v){ return new THREE.Vector3(v.x/AU*SCALE, v.z/AU*SCALE, -v.y/AU*SCALE); }
 
-// 地球テクスチャの経度0とメッシュ向きのズレを吸収する位相オフセット。
-// 昼夜が日時とそれっぽく合うよう見た目で調整する値（後付け調整用）。
-// リセット直後(2000-01-01 12:00 UT)に西経~80°(パナマ)が太陽を向いていたので、
-// 経度0(ギニア湾)が太陽直下に来るよう約 -80° 補正。符号がズレる場合は反転して調整。
-const EARTH_PHASE0 = -80 * Math.PI / 180;
+// 地球の自転位相オフセット[rad]。昼夜が日時に合うよう調整（画面のつまみで調整可）。
+let EARTH_PHASE0 = -90 * Math.PI / 180;
+
+// 地球の自転軸（慣性空間で固定、シーン座標の単位ベクトル）。
+//  黄道傾斜 ε=23.44°、北極が黄経 EARTH_AXIS_LON 方向へ倒れる。軸を公転位置に
+//  よらず固定することで季節（夏至に北極が太陽側=白夜 等）が再現される。
+//  実黄道座標 (sinε cosλ, sinε sinλ, cosε) を toScene(v)=(vx,vz,-vy) で写す。
+const EARTH_TILT = 23.44 * Math.PI / 180;
+let EARTH_AXIS_LON = 85 * Math.PI / 180; // 軸が倒れる黄経方向（画面のつまみで調整可）
+const EARTH_AXIS = new THREE.Vector3();
+function computeEarthAxis(){
+  const s = Math.sin(EARTH_TILT), c = Math.cos(EARTH_TILT);
+  const ex = s*Math.cos(EARTH_AXIS_LON), ey = s*Math.sin(EARTH_AXIS_LON), ez = c; // 実黄道
+  EARTH_AXIS.set(ex, ez, -ey).normalize(); // toScene 写像
+}
+computeEarthAxis();
+// 地球姿勢用: メッシュのローカルy軸(=テクスチャの北極)を EARTH_AXIS に向ける回転 ×
+// その軸まわりの自転。これで北極点が回転軸に一致する。
+const _earthTiltQuat = new THREE.Quaternion();
+const _earthSpinQuat = new THREE.Quaternion();
+const _yAxis = new THREE.Vector3(0,1,0);
 
 // 銀河公転モード（太陽系原点系）
 let galaxyMode = false;
@@ -408,8 +434,9 @@ BODIES.forEach((b, idx)=>{
     }
   }
   // pivot: 位置と赤道傾斜を持つ。自転軸(ローカルy)を tiltDeg だけ z 方向へ倒す。
+  // 地球は慣性空間固定軸を quaternion で直接扱うため、pivot は傾けない（二重傾き回避）。
   const pivot = new THREE.Group();
-  pivot.rotation.z = (b.tiltDeg || 0) * Math.PI / 180;
+  pivot.rotation.z = b.textureUrl ? 0 : (b.tiltDeg || 0) * Math.PI / 180;
   scene.add(pivot);
   pivots.push(pivot);
 
@@ -561,6 +588,25 @@ function applySpeed(){
 speedSlider.addEventListener('input', applySpeed);
 applySpeed();
 
+// 地球 自転軸の調整つまみ
+const earthPhaseSlider = document.getElementById('earthPhase');
+const earthAxisSlider = document.getElementById('earthAxis');
+const phaseValEl = document.getElementById('phaseVal');
+const axisValEl = document.getElementById('axisVal');
+function applyEarthTune(){
+  EARTH_PHASE0 = parseFloat(earthPhaseSlider.value) * Math.PI / 180;
+  EARTH_AXIS_LON = parseFloat(earthAxisSlider.value) * Math.PI / 180;
+  computeEarthAxis();
+  phaseValEl.textContent = `${earthPhaseSlider.value}°`;
+  axisValEl.textContent = `${earthAxisSlider.value}°`;
+}
+// スライダー初期値をソースの定数に合わせる
+earthPhaseSlider.value = Math.round(EARTH_PHASE0 * 180 / Math.PI);
+earthAxisSlider.value = Math.round(EARTH_AXIS_LON * 180 / Math.PI);
+earthPhaseSlider.addEventListener('input', applyEarthTune);
+earthAxisSlider.addEventListener('input', applyEarthTune);
+applyEarthTune();
+
 const pauseBtn = document.getElementById('pause');
 pauseBtn.addEventListener('click', ()=>{
   running = !running;
@@ -700,15 +746,17 @@ function animate(){
   for(let i=0;i<state.length;i++){
     pivots[i].position.copy(toScene(state[i].p)); // 位置は pivot に（mesh は pivot 中心）
     if(BODIES[i].textureUrl){
-      // 地球（実テクスチャ）は昼夜を日時にそれっぽく同期させる（近似）。
-      // 太陽方向の方位角 + その時刻の太陽直下経度 で位相を決めるので、
-      // 「だいたいその日時に正しい経度が昼になる」。均時差・章動などは無視。
-      const sx = toScene(state[0].p), ex = pivots[i].position;
-      const az = Math.atan2(sx.x - ex.x, sx.z - ex.z); // 地球→太陽 の方位角
-      // EPOCH(2000-01-01 12:00 UT)基準の世界時。UT=12:00 で経度0が太陽直下。
-      const utHours = ((12 + (simSeconds / DAY) * 24) % 24 + 24) % 24;
-      const subsolarLon = Math.PI - (utHours / 24) * 2 * Math.PI;
-      meshes[i].rotation.y = az - subsolarLon + EARTH_PHASE0;
+      // 地球（実テクスチャ）: 慣性空間で固定した自転軸 EARTH_AXIS のまわりを
+      // 恒星日で自転させる。軸が公転位置によらず一定なので、季節（夏至に北極が
+      // 太陽側＝白夜 など）とターミネーターの傾きが自然に再現される。
+      // 自転位相 EARTH_PHASE0 を1点合わせることで昼夜が日時に同期する。
+      const periodSec = BODIES[i].rotHours * 3600; // 恒星日
+      const turns = simSeconds / periodSec;
+      const theta = (turns - Math.floor(turns)) * 2 * Math.PI + EARTH_PHASE0;
+      // ローカルy(テクスチャの北極)を EARTH_AXIS に向ける × y軸まわりに自転θ
+      _earthTiltQuat.setFromUnitVectors(_yAxis, EARTH_AXIS);
+      _earthSpinQuat.setFromAxisAngle(_yAxis, theta);
+      meshes[i].quaternion.copy(_earthTiltQuat).multiply(_earthSpinQuat);
     } else {
       const periodSec = BODIES[i].rotHours * 3600;  // 負値=逆行
       const turns = simSeconds / periodSec;
