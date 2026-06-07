@@ -16,6 +16,7 @@
   #date { font-size: 18px; font-weight: bold; color: #9fd; letter-spacing: 0.5px; }
   #ui label { display: block; margin-top: 6px; }
   #ui input[type=range] { width: 100%; }
+  #ui input[type=date] { background:#26304d; color:#cde; border:1px solid #3a4a72; border-radius:6px; padding:2px 6px; font-size:12px; }
   .row { display:flex; justify-content: space-between; align-items:center; gap:8px; }
   .small { color:#9ab; font-size: 11px; }
   button {
@@ -47,6 +48,10 @@
   </div>
   <div class="row" style="margin-top:6px;">
     <button id="now" style="width:100%;">⏩ 現在へ早送り</button>
+  </div>
+  <div class="row" style="margin-top:6px; gap:4px;">
+    <input type="date" id="gotoDate" style="flex:1; min-width:0;">
+    <button id="gotoBtn">移動</button>
   </div>
   <label class="row" style="margin-top:8px;">
     <span>軌道トレイル表示</span>
@@ -628,6 +633,19 @@ nowBtn.addEventListener('click', ()=>{
   pauseBtn.textContent = '⏸ 一時停止';
 });
 
+// 指定日付へ移動（過去なら逆回し）。到達したら一時停止。
+const gotoDate = document.getElementById('gotoDate');
+document.getElementById('gotoBtn').addEventListener('click', ()=>{
+  if(!gotoDate.value) return; // 未入力
+  const [y,m,d] = gotoDate.value.split('-').map(Number);
+  const targetT = dateToSimSeconds(new Date(Date.UTC(y, m-1, d, 12, 0, 0)));
+  catchup = { target: ()=>targetT, onArrive: ()=>{
+    running = false; pauseBtn.textContent = '▶ 再生';
+  }};
+  running = true;
+  pauseBtn.textContent = '⏸ 一時停止';
+});
+
 // ----- 惑星直列（このシミュレーション内で実際に集まる瞬間を計算で探す） -----
 // 簡易積分のため固定日付（実暦の2161年など）では誤差で直列にならない。そこで
 // 「全惑星の黄経がある弧の中に収まる」最初の瞬間をシミュレーションを先送りして探す。
@@ -765,29 +783,32 @@ function animate(){
     // このフレームで進めるべきシミュレーション秒数
     let simAdvance;
     if(catchup){
-      // 目標simSecondsまで高速で詰める。残りに比例した速度で ease-out 的に進め、
-      // 到達したら onArrive を呼ぶ（等倍化や一時停止など）。
-      const remaining = catchup.target() - simSeconds; // 秒
-      if(remaining <= 0){
+      // 目標simSecondsまで高速で詰める（過去ならマイナス方向に逆回し）。
+      // 残りに比例した速度で ease-out 的に進め、到達したら onArrive を呼ぶ。
+      const remaining = catchup.target() - simSeconds; // 秒（符号付き: 負=過去）
+      const absRem = Math.abs(remaining);
+      if(absRem <= 0){
         simAdvance = 0; const cb = catchup.onArrive; catchup = null; cb && cb();
       } else {
-        const remYears = remaining / YEAR;
-        const yps = Math.min(Math.max(remYears / 4, 2), 500); // 約4秒で到達、上下限あり
-        simAdvance = Math.min(realDt * yps * YEAR, remaining);
-        if(simAdvance >= remaining){ const cb = catchup.onArrive; catchup = null; cb && cb(); }
+        const dir = Math.sign(remaining);
+        const yps = Math.min(Math.max((absRem/YEAR) / 4, 2), 500); // 約4秒で到達、上下限あり
+        simAdvance = dir * Math.min(realDt * yps * YEAR, absRem);
+        if(Math.abs(simAdvance) >= absRem){ const cb = catchup.onArrive; catchup = null; cb && cb(); }
       }
     } else {
       simAdvance = realDt * yearsPerSecond * YEAR;
     }
     // PHYS_DT(0.05日)は1ステップの上限。遅いときは可変dtで滑らかに（等倍まで対応）、
     // 速いときは PHYS_DT 刻みに分割しつつ1フレーム最大10000ステップでクランプ。
+    // simAdvance が負（逆回し）のときは dt も負になる（Yoshida は時間対称なので可）。
     let steps, dt;
-    if(simAdvance <= 0){
+    const absAdv = Math.abs(simAdvance);
+    if(absAdv === 0){
       steps = 0; dt = 0;
-    } else if(simAdvance <= PHYS_DT){
+    } else if(absAdv <= PHYS_DT){
       steps = 1; dt = simAdvance;
     } else {
-      steps = Math.min(Math.ceil(simAdvance / PHYS_DT), 10000);
+      steps = Math.min(Math.ceil(absAdv / PHYS_DT), 10000);
       dt = simAdvance / steps;
     }
     for(let k=0;k<steps;k++){
