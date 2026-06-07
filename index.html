@@ -64,6 +64,13 @@
     <span>銀河公転モード</span>
     <input type="checkbox" id="galaxy">
   </label>
+  <label class="row">
+    <span>実スケール表示</span>
+    <input type="checkbox" id="realSize">
+  </label>
+  <div class="small" id="realSizeNote" style="display:none;color:#fc9;">
+    ※実際の半径で描画。距離に対し極小のため、ほぼ点になります。
+  </div>
   <details id="earthTune" style="margin-top:8px;">
     <summary style="cursor:pointer;color:#9ab;font-size:12px;">地球 自転軸の調整</summary>
     <label>自転位相 <span class="small" id="phaseVal"></span>
@@ -135,37 +142,38 @@ const GALAXY_SPEED_RATIO = 220 / 29.8;      // 銀河公転速度 / 地球公転
 //           pos [AU], vel [AU/day]。
 //  mass: 質量 [kg]
 //  radius: 表示用の見やすさ優先半径（実スケールではない）
+//  realRadiusKm: 実際の半径 [km]（「実スケール表示」用）
 //  color: 基本色
 //  rotHours: 自転周期 [時間]（恒星日）。負値は逆行自転（金星・天王星）。
 //  tiltDeg: 赤道傾斜角 [度]（自転軸の傾き）。土星の環もこの傾きの赤道面に置く。
 // ============================================================
 const BODIES = [
-  { name:'太陽',     mass:1.98892e30, radius:12, color:0xffcc33, emissive:true, rotHours:609.12, tiltDeg:7.25,
+  { name:'太陽',     mass:1.98892e30, radius:12, realRadiusKm:696000, color:0xffcc33, emissive:true, rotHours:609.12, tiltDeg:7.25,
     pos:[ 0, 0, 0], vel:[0,0,0] },
-  { name:'水星',     mass:3.3011e23,  radius:2.2, color:0xa9a9a9, rotHours:1407.6, tiltDeg:0.03,
+  { name:'水星',     mass:3.3011e23,  radius:2.2, realRadiusKm:2440, color:0xa9a9a9, rotHours:1407.6, tiltDeg:0.03,
     pos:[-1.300936053754522e-1,-4.472876181353563e-1,-2.459830695805179e-2],
     vel:[ 2.136639566801616e-2,-6.447989743836899e-3,-2.487863414837162e-3] },
-  { name:'金星',     mass:4.8675e24,  radius:3.6, color:0xe8c87a, rotHours:-5832.5, tiltDeg:177.4,
+  { name:'金星',     mass:4.8675e24,  radius:3.6, realRadiusKm:6052, color:0xe8c87a, rotHours:-5832.5, tiltDeg:177.4,
     pos:[-7.183022963453890e-1,-3.265430819980606e-2, 4.101418202684621e-2],
     vel:[ 7.981175157753219e-4,-2.029521870223381e-2,-3.234515157278357e-4] },
   // 地表テクスチャは Solar System Scope (CC BY 4.0) を同梱 — README にクレジット記載
-  { name:'地球',     mass:5.97237e24, radius:3.8, color:0x2a6dd6, rotHours:23.9345, tiltDeg:23.44,
+  { name:'地球',     mass:5.97237e24, radius:3.8, realRadiusKm:6371, color:0x2a6dd6, rotHours:23.9345, tiltDeg:23.44,
     textureUrl:'textures/2k_earth_daymap.jpg',
     pos:[-1.771350992727098e-1, 9.672416867665306e-1,-4.085281582511366e-6],
     vel:[-1.720762506872895e-2,-3.158782144324866e-3, 1.049888594613343e-7] },
-  { name:'火星',     mass:6.4171e23,  radius:2.8, color:0xc1440e, rotHours:24.6229, tiltDeg:25.19,
+  { name:'火星',     mass:6.4171e23,  radius:2.8, realRadiusKm:3390, color:0xc1440e, rotHours:24.6229, tiltDeg:25.19,
     pos:[ 1.390715921746351e0,-1.341631815101244e-2,-3.446766277581799e-2],
     vel:[ 6.714995020673780e-4, 1.518724809448758e-2, 3.016517720181207e-4] },
-  { name:'木星',     mass:1.8982e27,  radius:9,  color:0xd2a679, bands:true, rotHours:9.925, tiltDeg:3.13,
+  { name:'木星',     mass:1.8982e27,  radius:9,  realRadiusKm:69911, color:0xd2a679, bands:true, rotHours:9.925, tiltDeg:3.13,
     pos:[ 4.001177435589426e0, 2.938575782470499e0,-1.017852834518150e-1],
     vel:[-4.568326581426814e-3, 6.443254772062298e-3, 7.558125550724480e-5] },
-  { name:'土星',     mass:5.6834e26,  radius:8,  color:0xe3d9a6, rings:true, rotHours:10.656, tiltDeg:26.73,
+  { name:'土星',     mass:5.6834e26,  radius:8,  realRadiusKm:58232, color:0xe3d9a6, rings:true, rotHours:10.656, tiltDeg:26.73,
     pos:[ 6.406410428378656e0, 6.569988452110556e0,-3.690759730763678e-1],
     vel:[-4.291884614620154e-3, 3.890802016952225e-3, 1.026524540265903e-4] },
-  { name:'天王星',   mass:8.6810e25,  radius:5.5, color:0x9fdce3, rotHours:-17.24, tiltDeg:97.77,
+  { name:'天王星',   mass:8.6810e25,  radius:5.5, realRadiusKm:25362, color:0x9fdce3, rotHours:-17.24, tiltDeg:97.77,
     pos:[ 1.443185527592405e1,-1.373432340215935e1,-2.381417673271042e-1],
     vel:[ 2.678248748170153e-3, 2.672661616957798e-3,-2.478945316896398e-5] },
-  { name:'海王星',   mass:1.02413e26, radius:5.3, color:0x3f66c9, rotHours:16.11, tiltDeg:28.32,
+  { name:'海王星',   mass:1.02413e26, radius:5.3, realRadiusKm:24622, color:0x3f66c9, rotHours:16.11, tiltDeg:28.32,
     pos:[ 1.681204725521350e1,-2.499176306235863e1, 1.272225154327781e-1],
     vel:[ 2.578912210245283e-3, 1.776527208478390e-3,-9.601662561578555e-5] },
 ];
@@ -203,6 +211,7 @@ const comets = [];
 // 早送り(キャッチアップ)中の状態。null=通常。
 //  { target: ()=>目標simSeconds, onArrive: ()=>到達時の処理 }
 let catchup = null;
+let focusIndex = null;       // カメラ中心にする天体の index（null=フォーカスなし）
 
 // 物理積分の1ステップ上限（シミュレーション秒）= 0.05日。
 // Yoshida 4次が高精度なため、これでエネルギー誤差はほぼ倍精度の限界(~9e-15)。
@@ -282,7 +291,7 @@ computeAccelerations();
 const scene = new THREE.Scene();
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer = new THREE.WebGLRenderer({ antialias:true, logarithmicDepthBuffer:true });
 } catch(e){
   document.body.innerHTML =
     '<div style="color:#fbb;font-family:sans-serif;padding:40px;line-height:1.8;">'
@@ -296,7 +305,9 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); // 高DPIで�
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.01, 100000);
+// near は小さめ（実スケール表示で極小の天体にも寄れるよう）。深度精度は
+// logarithmicDepthBuffer で確保。
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.0005, 100000);
 camera.position.set(0, 120, 240);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -523,10 +534,11 @@ BODIES.forEach((b, idx)=>{
   trailGroup.add(line);
   trails.push({ line, count:0, last:null });
 
-  // ラベル
+  // ラベル（クリックでその天体を中心に）
   const el = document.createElement('div');
   el.textContent = b.name;
-  el.style.cssText = 'position:absolute;color:#cde;font-size:11px;pointer-events:none;text-shadow:0 0 3px #000;transform:translate(-50%,-150%);white-space:nowrap;';
+  el.style.cssText = 'position:absolute;color:#cde;font-size:11px;cursor:pointer;text-shadow:0 0 3px #000;transform:translate(-50%,-150%);white-space:nowrap;';
+  el.addEventListener('click', ()=>focusOn(idx));
   document.body.appendChild(el);
   labelEls.push(el);
 });
@@ -556,11 +568,13 @@ function makeRingTexture(color){
   return new THREE.CanvasTexture(cv);
 }
 
-// 凡例
+// 凡例（クリックでその天体を中心に）
 const legend = document.getElementById('legend');
-BODIES.forEach(b=>{
+BODIES.forEach((b,i)=>{
   const span=document.createElement('span');
+  span.style.cursor='pointer';
   span.innerHTML=`<span class="dot" style="background:#${b.color.toString(16).padStart(6,'0')}"></span>${b.name}`;
+  span.addEventListener('click', ()=>focusOn(i));
   legend.appendChild(span);
 });
 
@@ -661,6 +675,7 @@ document.getElementById('reset').addEventListener('click', ()=>{
   state[0].v.addScaledVector(totalP, -1/state[0].mass);
   simSeconds = 0;
   catchup = null;
+  focusIndex = null;
   clearTrails();
   clearComets();
   computeAccelerations();
@@ -830,6 +845,25 @@ function applyGalaxyMode(on){
 }
 document.getElementById('galaxy').addEventListener('change', e=>applyGalaxyMode(e.target.checked));
 
+// 実スケール表示: pivot.scale を切り替えて本体・環を実際の半径比で描く。
+// 実半径は距離スケールに対し極小なので、ほぼ点になる（注記で明示）。
+function applyRealSize(on){
+  document.getElementById('realSizeNote').style.display = on ? 'block' : 'none';
+  for(let i=0;i<pivots.length;i++){
+    let factor = 1;
+    if(on && BODIES[i].realRadiusKm){
+      const realUnits = BODIES[i].realRadiusKm*1000 / AU * SCALE;
+      factor = realUnits / BODIES[i].radius;
+    }
+    pivots[i].scale.setScalar(factor);
+  }
+  // サイズが変わったのでズームを調整: フォーカス中はその天体に合った距離へ、
+  // フォーカスなしは既定ビューへ戻す（実⇔誇張の切替で拡大しすぎが残らない）。
+  if(focusIndex != null) setFocus(focusIndex);
+  else resetView();
+}
+document.getElementById('realSize').addEventListener('change', e=>applyRealSize(e.target.checked));
+
 // 起動時、ブラウザがリロードで復元したチェック状態に内部変数を同期する。
 // （change イベントはユーザー操作時しか発火しないため、これが無いと
 //   チェック表示と実際の動作がズレる）
@@ -837,6 +871,7 @@ document.getElementById('galaxy').addEventListener('change', e=>applyGalaxyMode(
   showTrails = document.getElementById('trails').checked;
   trails.forEach(t=> t.line.visible = showTrails);
   applyGalaxyMode(document.getElementById('galaxy').checked);
+  applyRealSize(document.getElementById('realSize').checked);
 })();
 
 window.addEventListener('resize', ()=>{
@@ -939,12 +974,46 @@ function maybeSpawnComets(simAdvanceSec){
   for(let i=0;i<n;i++) spawnComet();
 }
 
+// 天体フォーカス。フォーカス中はカメラ系を天体の移動ぶん平行移動して追従する
+// （距離・角度=ズーム率が保たれる）。focusPrev は差分計算用の前フレーム天体位置。
+const focusPrev = new THREE.Vector3();
+const _camDir = new THREE.Vector3();
+
+// その天体が画面に程よく収まるカメラ距離。実際の描画半径(表示半径×scale)に比例。
+function focusDistance(i){
+  const effR = BODIES[i].radius * pivots[i].scale.x; // 実スケール時は縮小済み
+  return Math.max(effR * 6, 0.003); // 下限(near より十分大きく)
+}
+// 注視点をその天体へ移し、サイズに合った距離・現在の視線方向でカメラを置く。
+function setFocus(i){
+  focusIndex = i;
+  const pos = pivots[i].position;
+  // 現在の視線方向を維持（初回は既定方向にフォールバック）
+  _camDir.subVectors(camera.position, controls.target);
+  if(_camDir.lengthSq() < 1e-9) _camDir.set(0, 0.5, 1);
+  _camDir.normalize();
+  controls.target.copy(pos);
+  camera.position.copy(pos).addScaledVector(_camDir, focusDistance(i));
+  focusPrev.copy(pos);
+}
+// 既定ビュー（フォーカス解除時）
+function resetView(){
+  controls.target.set(0,0,0);
+  camera.position.set(0,120,240);
+}
+// クリック時: 同じ天体なら解除して既定ビュー、別の天体ならその天体にフォーカス。
+function focusOn(i){
+  if(focusIndex === i){ focusIndex = null; resetView(); return; }
+  setFocus(i);
+}
+
 // ============================================================
 // メインループ
 // ============================================================
 let lastTime = performance.now();
 let trailTimer = 0;
 const _v = new THREE.Vector3();
+const _focusDelta = new THREE.Vector3();
 
 function animate(){
   requestAnimationFrame(animate);
@@ -1027,6 +1096,16 @@ function animate(){
   trailGroup.position.set(-off.x, -off.y, -off.z);
 
   updateComets();
+
+  // 天体フォーカス: 天体の移動ぶんカメラ系(注視点+カメラ位置)を平行移動して追従。
+  // 距離・角度(ズーム率)は保たれ、ユーザーの回転・ズーム操作もそのまま効く。
+  if(focusIndex != null){
+    const pos = pivots[focusIndex].position;
+    _focusDelta.subVectors(pos, focusPrev);
+    controls.target.add(_focusDelta);
+    camera.position.add(_focusDelta);
+    focusPrev.copy(pos);
+  }
 
   controls.update();
   renderer.render(scene, camera);
