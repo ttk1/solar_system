@@ -31,6 +31,8 @@
   #fun { margin-top:10px; padding-top:8px; border-top:1px solid #3a4a72; }
   #fun .fun-title { font-size:12px; color:#e9b; margin-bottom:6px; }
   #fun button { display:block; width:100%; }
+  #fun label { display:block; margin-top:6px; font-size:13px; }
+  #fun input[type=range] { width:100%; }
 </style>
 </head>
 <body>
@@ -75,6 +77,13 @@
   <div id="fun">
     <div class="fun-title">🎲 面白機能</div>
     <button id="alignBtn">🪐 次の惑星直列へ</button>
+    <label style="margin-top:8px;">☀ 太陽質量 <span class="small" id="sunMassVal"></span>
+      <input type="range" id="sunMass" min="0" max="10" step="0.1" value="1">
+    </label>
+    <label>🌌 重力定数 <span class="small" id="gMulVal"></span>
+      <input type="range" id="gMul" min="0" max="10" step="0.1" value="1">
+    </label>
+    <button id="physReset" style="margin-top:4px;">物理を等倍に戻す</button>
   </div>
 </div>
 <div id="hint">マウス: 左ドラッグ=回転 / 右ドラッグ=移動 / ホイール=拡大縮小</div>
@@ -181,6 +190,8 @@ let simSeconds = 0;          // 経過シミュレーション秒
 let running = true;
 let yearsPerSecond = 1.0;    // 実時間1秒あたりのシミュレーション年数
 let showTrails = true;
+let sunMassMul = 1.0;        // 面白機能: 太陽質量の倍率
+let gMul = 1.0;              // 面白機能: 重力定数の倍率
 // 早送り(キャッチアップ)中の状態。null=通常。
 //  { target: ()=>目標simSeconds, onArrive: ()=>到達時の処理 }
 let catchup = null;
@@ -202,7 +213,9 @@ function computeAccelerations(){
       const r2 = tmp.lengthSq();
       if(r2 === 0) continue;
       const r = Math.sqrt(r2);
-      const f = G * sj.mass / r2;
+      // 面白機能の倍率: G に gMul、太陽(index 0)の質量に sunMassMul を掛ける
+      const m = (j === 0) ? sj.mass * sunMassMul : sj.mass;
+      const f = G * gMul * m / r2;
       si.a.addScaledVector(tmp, f / r);
     }
   }
@@ -729,6 +742,24 @@ alignBtn.addEventListener('click', ()=>{
 });
 const ALIGN_BTN_LABEL = '🪐 次の惑星直列へ';
 alignBtn.textContent = ALIGN_BTN_LABEL;
+
+// 面白機能: 太陽質量・重力定数の倍率
+const sunMassSlider = document.getElementById('sunMass');
+const gMulSlider = document.getElementById('gMul');
+const sunMassValEl = document.getElementById('sunMassVal');
+const gMulValEl = document.getElementById('gMulVal');
+function applyPhysMul(){
+  sunMassMul = parseFloat(sunMassSlider.value);
+  gMul = parseFloat(gMulSlider.value);
+  sunMassValEl.textContent = `×${sunMassMul.toFixed(1)}`;
+  gMulValEl.textContent = `×${gMul.toFixed(1)}`;
+}
+sunMassSlider.addEventListener('input', applyPhysMul);
+gMulSlider.addEventListener('input', applyPhysMul);
+document.getElementById('physReset').addEventListener('click', ()=>{
+  sunMassSlider.value = 1; gMulSlider.value = 1; applyPhysMul();
+});
+applyPhysMul();
 
 document.getElementById('trails').addEventListener('change', e=>{
   showTrails = e.target.checked;
