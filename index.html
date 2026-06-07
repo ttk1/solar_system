@@ -618,14 +618,18 @@ function updateTrail(i){
     t.line.geometry.attributes.position.needsUpdate = true;
     return;
   }
-  // 前回打った点から TRAIL_SEG 以上進んだときだけ点を追加する（距離基準）。
-  if(t.last.distanceToSquared(world) < TRAIL_SEG*TRAIL_SEG) return;
-  // 全体を1つ前へずらして末尾(=最新)に新点を置く。色は固定グラデ(末尾=明)なので、
-  // 位置だけ流れることで明るい先端が進み暗い尾が残る＝流れて見える。
-  arr.copyWithin(0, 3);
   const last3 = (TRAIL_MAX-1)*3;
+  // 前回「履歴に確定した」点から TRAIL_SEG 以上進んだときだけ、新しい点を1つ追加する。
+  if(t.last.distanceToSquared(world) >= TRAIL_SEG*TRAIL_SEG){
+    // 全体を1つ前へずらして末尾(=最新)に新点を置く。色は固定グラデ(末尾=明)なので、
+    // 位置だけ流れることで明るい先端が進み暗い尾が残る＝流れて見える。
+    arr.copyWithin(0, 3);
+    t.last.copy(world);     // 確定点を更新（次の追加判定の基準）
+  }
+  // 末尾(最新)点は毎回 現在位置へスナップする。これをしないと、付け根が最大 TRAIL_SEG
+  // 後方に取り残され、実スケールで天体に寄ると「惑星(極小)とトレイル付け根のズレ」が
+  // 毎フレーム揺れてチカチカする。末尾だけ常に惑星へ固定すれば付け根が一致して安定する。
   arr[last3]=sp.x; arr[last3+1]=sp.y; arr[last3+2]=sp.z;
-  t.last.copy(world);
   t.line.geometry.attributes.position.needsUpdate = true;
 }
 
