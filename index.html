@@ -27,6 +27,9 @@
   #legend span { display:inline-block; margin-right:8px; white-space:nowrap; }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; vertical-align:middle; margin-right:3px; }
   #hint { position:absolute; bottom:10px; left:10px; color:#778; font-size:11px; z-index:10; }
+  #fun { margin-top:10px; padding-top:8px; border-top:1px solid #3a4a72; }
+  #fun .fun-title { font-size:12px; color:#e9b; margin-bottom:6px; }
+  #fun button { display:block; width:100%; }
 </style>
 </head>
 <body>
@@ -46,10 +49,6 @@
     <button id="now" style="width:100%;">⏩ 現在へ早送り</button>
   </div>
   <label class="row" style="margin-top:8px;">
-    <span>重力伝播遅延（光速）</span>
-    <input type="checkbox" id="delay" checked>
-  </label>
-  <label class="row">
     <span>軌道トレイル表示</span>
     <input type="checkbox" id="trails" checked>
   </label>
@@ -68,6 +67,10 @@
     <div class="small">合った値をソースの EARTH_PHASE0 / EARTH_AXIS_LON に焼き込めます</div>
   </details>
   <div id="legend"></div>
+  <div id="fun">
+    <div class="fun-title">🎲 面白機能</div>
+    <button id="alignBtn">🪐 次の惑星直列へ</button>
+  </div>
 </div>
 <div id="hint">マウス: 左ドラッグ=回転 / 右ドラッグ=移動 / ホイール=拡大縮小</div>
 
@@ -91,7 +94,6 @@ const G = 6.674e-11;            // 万有引力定数 [m^3 kg^-1 s^-2]
 const AU = 1.495978707e11;      // 天文単位 [m]
 const DAY = 86400;              // 1日 [s]
 const YEAR = 365.25 * DAY;      // 1年 [s]
-const C = 299792458;            // 光速 [m/s]
 
 // ============================================================
 // 銀河公転（実スケール）
@@ -155,8 +157,6 @@ const state = BODIES.map(b => ({
   p: new THREE.Vector3(b.pos[0]*AU, b.pos[1]*AU, b.pos[2]*AU),
   v: new THREE.Vector3(b.vel[0]*AU/DAY, b.vel[1]*AU/DAY, b.vel[2]*AU/DAY),
   a: new THREE.Vector3(),
-  // 重力伝播遅延用の位置履歴 (リングバッファ)
-  history: [],
 }));
 
 // 系全体の運動量がゼロになるよう太陽の速度を補正（重心を静止させる）
@@ -175,40 +175,15 @@ const EPOCH = new Date(Date.UTC(2000,0,1,12,0,0)); // J2000
 let simSeconds = 0;          // 経過シミュレーション秒
 let running = true;
 let yearsPerSecond = 1.0;    // 実時間1秒あたりのシミュレーション年数
-let useDelay = true;         // 重力伝播遅延
 let showTrails = true;
-let catchingUp = false;      // 「現在へ早送り」中フラグ
+// 早送り(キャッチアップ)中の状態。null=通常。
+//  { target: ()=>目標simSeconds, onArrive: ()=>到達時の処理 }
+let catchup = null;
 
-// 物理積分の固定ステップ（シミュレーション秒）。1ステップ = 0.5日
-const PHYS_DT = 0.5 * DAY;
-// 履歴保持: 海王星まで光が届くのに最大 ~4時間 程度だが、
-// 余裕をもって最大遅延を保持。AUあたりの光遅延 ~499s。
-const MAX_DELAY_S = 6 * 3600; // 6時間ぶんの履歴で十分カバー
-const HISTORY_STEP = PHYS_DT; // 履歴の時間刻み
-const HISTORY_LEN = Math.ceil(MAX_DELAY_S / HISTORY_STEP) + 2;
+// 物理積分の1ステップ上限（シミュレーション秒）。1ステップ = 0.05日（精度優先）
+const PHYS_DT = 0.05 * DAY;
 
-function pushHistory(){
-  for(const s of state){
-    s.history.push(s.p.clone());
-    if(s.history.length > HISTORY_LEN) s.history.shift();
-  }
-}
-
-// 遅延を考慮した、時刻 (現在 - delaySeconds) における天体位置を補間取得
-function delayedPos(s, delaySeconds){
-  const steps = delaySeconds / HISTORY_STEP;     // 何ステップ前か
-  const idxFromEnd = steps;
-  const n = s.history.length;
-  if(n === 0) return s.p;
-  const fidx = (n - 1) - idxFromEnd;             // 履歴配列上の実数インデックス
-  if(fidx <= 0) return s.history[0];
-  if(fidx >= n-1) return s.history[n-1];
-  const i = Math.floor(fidx);
-  const t = fidx - i;
-  return s.history[i].clone().lerp(s.history[i+1], t);
-}
-
-// 加速度計算（重力伝播遅延オプション付き）
+// 加速度計算（ニュートン重力, 瞬時作用）
 const tmp = new THREE.Vector3();
 function computeAccelerations(){
   for(const s of state) s.a.set(0,0,0);
@@ -217,14 +192,7 @@ function computeAccelerations(){
     for(let j=0;j<state.length;j++){
       if(i===j) continue;
       const sj = state[j];
-      let srcPos = sj.p;
-      if(useDelay && si.history.length > 1){
-        // si から見た sj の見かけの距離で遅延を決める（現在位置で近似→遅延位置）
-        const approxDist = si.p.distanceTo(sj.p);
-        const delay = approxDist / C;
-        srcPos = delayedPos(sj, delay);
-      }
-      tmp.subVectors(srcPos, si.p);
+      tmp.subVectors(sj.p, si.p);
       const r2 = tmp.lengthSq();
       if(r2 === 0) continue;
       const r = Math.sqrt(r2);
@@ -234,21 +202,31 @@ function computeAccelerations(){
   }
 }
 
-// velocity Verlet 1ステップ
+// Yoshida 4次シンプレクティック積分の係数（drift c[], kick d[]）。
+//  w1 = 1/(2-2^(1/3)), w0 = -2^(1/3)*w1
+const _Y_W1 = 1 / (2 - Math.cbrt(2));
+const _Y_W0 = -Math.cbrt(2) * _Y_W1;
+const Y_C = [_Y_W1/2, (_Y_W0+_Y_W1)/2, (_Y_W0+_Y_W1)/2, _Y_W1/2]; // 位置更新
+const Y_D = [_Y_W1, _Y_W0, _Y_W1];                                 // 速度更新
+
+function drift(dt){ for(const s of state) s.p.addScaledVector(s.v, dt); }
+function kick(dt){ for(const s of state) s.v.addScaledVector(s.a, dt); }
+
+// 1ステップ = Yoshida 4次シンプレクティック積分（3回force評価/step）。
+// drift c1, kick d1, drift c2, kick d2, drift c3, kick d3, drift c4
 function stepPhysics(dt){
-  // 半ステップ速度
-  for(const s of state) s.v.addScaledVector(s.a, dt*0.5);
-  // 位置更新
-  for(const s of state) s.p.addScaledVector(s.v, dt);
-  pushHistory();
-  computeAccelerations();
-  // 残り半ステップ速度
-  for(const s of state) s.v.addScaledVector(s.a, dt*0.5);
+  drift(Y_C[0]*dt);
+  computeAccelerations(); kick(Y_D[0]*dt);
+  drift(Y_C[1]*dt);
+  computeAccelerations(); kick(Y_D[1]*dt);
+  drift(Y_C[2]*dt);
+  computeAccelerations(); kick(Y_D[2]*dt);
+  drift(Y_C[3]*dt);
+  computeAccelerations(); // 次ステップ・描画用に最新加速度を保持
   simSeconds += dt;
 }
 
 // 初期加速度
-pushHistory();
 computeAccelerations();
 
 // ============================================================
@@ -618,19 +596,19 @@ document.getElementById('reset').addEventListener('click', ()=>{
   BODIES.forEach((b,i)=>{
     state[i].p.set(b.pos[0]*AU, b.pos[1]*AU, b.pos[2]*AU);
     state[i].v.set(b.vel[0]*AU/DAY, b.vel[1]*AU/DAY, b.vel[2]*AU/DAY);
-    state[i].history.length = 0;
   });
   // 運動量再補正
   const totalP=new THREE.Vector3();
   for(const s of state) totalP.addScaledVector(s.v, s.mass);
   state[0].v.addScaledVector(totalP, -1/state[0].mass);
   simSeconds = 0;
-  catchingUp = false;
+  catchup = null;
   clearTrails();
-  pushHistory(); computeAccelerations();
+  computeAccelerations();
 });
 
-// 現在(wall-clock)に対応するシミュレーション秒
+// 指定の日時(UTC)に対応するシミュレーション秒
+function dateToSimSeconds(d){ return (d.getTime() - EPOCH.getTime()) / 1000; }
 function nowSimSeconds(){ return (Date.now() - EPOCH.getTime()) / 1000; }
 // 速度スライダーを等倍(実時間と同速)にセット
 function setSpeedToRealtime(){
@@ -640,16 +618,88 @@ function setSpeedToRealtime(){
 const nowBtn = document.getElementById('now');
 nowBtn.addEventListener('click', ()=>{
   if(simSeconds >= nowSimSeconds()){
-    // すでに現在以降にいる場合は等倍へ切り替えるだけ
-    setSpeedToRealtime();
+    setSpeedToRealtime(); // すでに現在以降なら等倍へ切り替えるだけ
     return;
   }
-  catchingUp = true;
+  // 目標は移動し続ける現在時刻。到達したら等倍(実時間追従)へ。
+  catchup = { target: nowSimSeconds, onArrive: setSpeedToRealtime };
   running = true;
   pauseBtn.textContent = '⏸ 一時停止';
 });
 
-document.getElementById('delay').addEventListener('change', e=>{ useDelay = e.target.checked; });
+// ----- 惑星直列（このシミュレーション内で実際に集まる瞬間を計算で探す） -----
+// 簡易積分のため固定日付（実暦の2161年など）では誤差で直列にならない。そこで
+// 「全惑星の黄経がある弧の中に収まる」最初の瞬間をシミュレーションを先送りして探す。
+// この弧以内に全惑星が収まれば直列とみなす。実際の「フル直列」でも8惑星は約69°に
+// 集まる程度で、本シミュレーションでも最小 spread は約62°（≈160年後）。65°に設定。
+const ALIGN_THRESHOLD = 65 * Math.PI / 180;
+
+// 全惑星(太陽除く)の黄経が収まる最小弧[rad]。小さいほど直列。
+function alignmentSpread(){
+  const ang = [];
+  for(let i=1;i<state.length;i++) ang.push(Math.atan2(state[i].p.y, state[i].p.x));
+  ang.sort((a,b)=>a-b);
+  let maxGap = (ang[0] + 2*Math.PI) - ang[ang.length-1]; // wrap ギャップ
+  for(let i=1;i<ang.length;i++) maxGap = Math.max(maxGap, ang[i]-ang[i-1]);
+  return 2*Math.PI - maxGap; // 収まる弧
+}
+// グローバル state / simSeconds の保存・復元
+function snapshotState(){
+  return {
+    t: simSeconds,
+    p: state.map(s=>s.p.clone()),
+    v: state.map(s=>s.v.clone()),
+    a: state.map(s=>s.a.clone()),
+  };
+}
+function restoreState(snap){
+  simSeconds = snap.t;
+  for(let i=0;i<state.length;i++){
+    state[i].p.copy(snap.p[i]); state[i].v.copy(snap.v[i]); state[i].a.copy(snap.a[i]);
+  }
+}
+// 現在以降で直列になる最初の simSeconds を探す（見つからなければ null）。
+function findNextAlignment(){
+  const snap = snapshotState();
+  const SCAN_DT = 1 * DAY;            // スキャンステップ（精度優先）
+  const MAX_YEARS = 1000;             // 探索上限
+  const maxSteps = Math.ceil(MAX_YEARS * YEAR / SCAN_DT);
+  let found = null;
+  let wasAligned = alignmentSpread() <= ALIGN_THRESHOLD; // 開始時すでに直列なら一旦抜けるまで待つ
+  for(let k=0;k<maxSteps;k++){
+    stepPhysics(SCAN_DT);
+    const aligned = alignmentSpread() <= ALIGN_THRESHOLD;
+    if(aligned && !wasAligned){ found = simSeconds; break; }
+    wasAligned = aligned;
+  }
+  restoreState(snap);
+  return found;
+}
+
+const alignBtn = document.getElementById('alignBtn');
+alignBtn.addEventListener('click', ()=>{
+  alignBtn.disabled = true;
+  alignBtn.textContent = '🪐 探索中…';
+  // 探索は同期処理なので、UI更新を挟んでから実行
+  setTimeout(()=>{
+    const targetT = findNextAlignment();
+    alignBtn.disabled = false;
+    alignBtn.textContent = ALIGN_BTN_LABEL;
+    if(targetT == null){ alignBtn.textContent = '🪐 直列が見つかりません'; return; }
+    catchup = { target: ()=>targetT, onArrive: ()=>{
+      running = false; pauseBtn.textContent = '▶ 再生'; // 直列の瞬間で一時停止
+      // 飛んだ先（直列）の日付をボタンに表示
+      const d = new Date(EPOCH.getTime() + targetT*1000);
+      alignBtn.textContent = `🪐 直列 ${d.getUTCFullYear()}年`
+        + `${String(d.getUTCMonth()+1).padStart(2,'0')}月${String(d.getUTCDate()).padStart(2,'0')}日`;
+    }};
+    running = true;
+    pauseBtn.textContent = '⏸ 一時停止';
+  }, 30);
+});
+const ALIGN_BTN_LABEL = '🪐 次の惑星直列へ';
+alignBtn.textContent = ALIGN_BTN_LABEL;
+
 document.getElementById('trails').addEventListener('change', e=>{
   showTrails = e.target.checked;
   trails.forEach(t=> t.line.visible = showTrails);
@@ -674,7 +724,6 @@ document.getElementById('galaxy').addEventListener('change', e=>applyGalaxyMode(
 // （change イベントはユーザー操作時しか発火しないため、これが無いと
 //   チェック表示と実際の動作がズレる）
 (function syncControlsFromDOM(){
-  useDelay   = document.getElementById('delay').checked;
   showTrails = document.getElementById('trails').checked;
   trails.forEach(t=> t.line.visible = showTrails);
   applyGalaxyMode(document.getElementById('galaxy').checked);
@@ -703,30 +752,30 @@ function animate(){
   if(running){
     // このフレームで進めるべきシミュレーション秒数
     let simAdvance;
-    if(catchingUp){
-      // 現在(wall-clock)まで高速で詰める。残りに比例した速度で ease-out 的に進め、
-      // 到達したらピタッと止めて等倍(実時間追従)へ切り替える。
-      const remaining = nowSimSeconds() - simSeconds; // 秒
+    if(catchup){
+      // 目標simSecondsまで高速で詰める。残りに比例した速度で ease-out 的に進め、
+      // 到達したら onArrive を呼ぶ（等倍化や一時停止など）。
+      const remaining = catchup.target() - simSeconds; // 秒
       if(remaining <= 0){
-        simAdvance = 0; catchingUp = false; setSpeedToRealtime();
+        simAdvance = 0; const cb = catchup.onArrive; catchup = null; cb && cb();
       } else {
         const remYears = remaining / YEAR;
         const yps = Math.min(Math.max(remYears / 4, 2), 500); // 約4秒で到達、上下限あり
         simAdvance = Math.min(realDt * yps * YEAR, remaining);
-        if(simAdvance >= remaining){ catchingUp = false; setSpeedToRealtime(); }
+        if(simAdvance >= remaining){ const cb = catchup.onArrive; catchup = null; cb && cb(); }
       }
     } else {
       simAdvance = realDt * yearsPerSecond * YEAR;
     }
-    // PHYS_DT(0.5日)は1ステップの上限。遅いときは可変dtで滑らかに（等倍まで対応）、
-    // 速いときは PHYS_DT 刻みに分割しつつ1フレーム最大2000ステップでクランプ。
+    // PHYS_DT(0.1日)は1ステップの上限。遅いときは可変dtで滑らかに（等倍まで対応）、
+    // 速いときは PHYS_DT 刻みに分割しつつ1フレーム最大10000ステップでクランプ。
     let steps, dt;
     if(simAdvance <= 0){
       steps = 0; dt = 0;
     } else if(simAdvance <= PHYS_DT){
       steps = 1; dt = simAdvance;
     } else {
-      steps = Math.min(Math.ceil(simAdvance / PHYS_DT), 2000);
+      steps = Math.min(Math.ceil(simAdvance / PHYS_DT), 10000);
       dt = simAdvance / steps;
     }
     for(let k=0;k<steps;k++){
