@@ -448,8 +448,10 @@ let EARTH_PHASE0 = 90 * Math.PI / 180;
 //  黄道傾斜 ε=23.44°、北極が黄経 EARTH_AXIS_LON 方向へ倒れる。軸を公転位置に
 //  よらず固定することで季節（夏至に北極が太陽側=白夜 等）が再現される。
 //  実黄道座標 (sinε cosλ, sinε sinλ, cosε) を toScene(v)=(vx,vz,-vy) で写す。
+//  λ の物理値: 北天の極は黄道座標で (0, sinε, cosε)、すなわち黄経90°方向に投影される
+//  （北極星が黄経90°側へ倒れる）。よって EARTH_AXIS_LON = 90°（従来は目視で85°としていた）。
 const EARTH_TILT = 23.44 * Math.PI / 180;
-let EARTH_AXIS_LON = 85 * Math.PI / 180; // 軸が倒れる黄経方向（画面のつまみで調整可）
+let EARTH_AXIS_LON = 90 * Math.PI / 180; // 軸が倒れる黄経方向（北天の極の黄経=90°）
 const EARTH_AXIS = new THREE.Vector3();
 function computeEarthAxis(){
   const s = Math.sin(EARTH_TILT), c = Math.cos(EARTH_TILT);
@@ -698,12 +700,15 @@ BODIES.forEach((b, idx)=>{
 // 「自転に追従して星空が流れる地上視点」が得られる。
 const earthIndex = BODIES.findIndex(b => b.textureUrl);
 // 観測者の置き場。OBS_LAT_DEG/OBS_LON_DEG は「地理座標」(北緯+・東経+)で指定する。
-// テクスチャの貼り方と自転位相のぶん、地理経度とメッシュのローカル経度はずれるので、
-// placeObserver 内で実測オフセットを当てて変換する:
-//   メッシュ緯度 = 地理緯度        (北緯+ がそのまま上=北極側)
-//   メッシュ経度 = 地理経度 - 270°  (テクスチャ継ぎ目+EARTH_PHASE0 ぶんの位相)
-// 実測の対応: 東京(地理 35.7,139.7) の経度が合う位相。
-const OBS_LON_OFFSET = -270;
+// メッシュのローカル座標への変換は、使用テクスチャが標準的な equirectangular
+// (u: 西→東で 0..1=経度-180..+180、v: 上→下で北極..南極) であることと、
+// Three.js SphereGeometry の UV→頂点の貼り方から厳密に導ける（実測UVと一致を確認）:
+//   テクスチャ左上(0,0)を北極・右下(1,1)を南極とすると、東京(35.7N,139.7E)はUV≈(0.89,0.30)。
+//   φ=緯度, λ=経度(rad) として
+//     x =  r·cosφ·cosλ
+//     y =  r·sinφ          (北緯+ が メッシュ +Y 側。実測: 東京は北緯+35.7で足元一致)
+//     z = -r·cosφ·sinλ
+//   ※この式は元期での慣性姿勢に対するメッシュのローカル位置。自転は mesh の回転で別途入る。
 let OBS_LAT_DEG = 35.7;   // 東京(北緯)
 let OBS_LON_DEG = 139.7;  // 東京(東経)
 const observer = new THREE.Object3D();
@@ -712,13 +717,13 @@ const observer = new THREE.Object3D();
 const OBS_EYE = 1.02;
 function placeObserver(){
   const r = BODIES[earthIndex].radius * OBS_EYE; // メッシュのローカル半径(pivot.scaleは継承)
-  const lat = OBS_LAT_DEG * Math.PI / 180;                   // 地理緯度→メッシュ緯度
-  const lon = (OBS_LON_DEG + OBS_LON_OFFSET) * Math.PI / 180; // 地理経度→メッシュ経度
-  const cphi = Math.cos(lat);
+  const phi = OBS_LAT_DEG * Math.PI / 180;
+  const lam = OBS_LON_DEG * Math.PI / 180;
+  const cphi = Math.cos(phi);
   observer.position.set(
-    r * cphi * Math.sin(lon),
-    r * Math.sin(lat),
-    r * cphi * Math.cos(lon)
+     r * cphi * Math.cos(lam),
+     r * Math.sin(phi),
+    -r * cphi * Math.sin(lam)
   );
 }
 placeObserver();
@@ -829,11 +834,15 @@ function rebaseTrails(newRef, tol = 0){
 const dateEl = document.getElementById('date');
 const elapsedEl = document.getElementById('elapsed');
 function updateDate(){
-  const d = new Date(EPOCH.getTime() + simSeconds*1000);
+  // シミュレーション時刻は UTC 基準。JST(=UTC+9)へ9時間ずらし、UTCゲッタで読み出して
+  // 日本時間の年月日・時分を表示する（日付も JST に合わせてずれる）。
+  const d = new Date(EPOCH.getTime() + simSeconds*1000 + 9*3600*1000);
   const y = d.getUTCFullYear();
   const mo = String(d.getUTCMonth()+1).padStart(2,'0');
   const da = String(d.getUTCDate()).padStart(2,'0');
-  dateEl.textContent = `${y}年${mo}月${da}日`;
+  const hh = String(d.getUTCHours()).padStart(2,'0');
+  const mi = String(d.getUTCMinutes()).padStart(2,'0');
+  dateEl.textContent = `${y}年${mo}月${da}日 ${hh}:${mi} JST`;
   const years = simSeconds/YEAR;
   elapsedEl.textContent = `元期(2000年)から ${years>=0?'+':''}${years.toFixed(2)} 年`;
 }
