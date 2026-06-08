@@ -655,15 +655,18 @@ BODIES.forEach((b, idx)=>{
         shader.fragmentShader = shader.fragmentShader
           .replace('#include <common>',
                    '#include <common>\nvarying vec3 vWorldNrm;\nuniform vec3 uSunDir;\nuniform sampler2D uNightMap;\nuniform float uHasNight;')
-          // 最終出力の直前で夜景を加算。ndl<0(太陽の裏側)ほど街明かりを強く。
-          .replace('#include <dithering_fragment>',
+          // トーンマッピング/色空間変換の前(=リニア色空間)で夜景を加算する。
+          // ここで足さないと sRGB エンコード後に線形値を混ぜることになり明るさがずれる。
+          // ndl<0(太陽の裏側)ほど街明かりを強く。テクスチャは sRGB 指定なので GPU が
+          // サンプル時にリニアへデコード済み＝そのまま outgoingLight に足してよい。
+          .replace('#include <tonemapping_fragment>',
                    `if(uHasNight > 0.5){
                       float ndl = dot(normalize(vWorldNrm), normalize(uSunDir));
                       float night = smoothstep(0.10, -0.10, ndl); // 昼=0, 夜=1, 境目は薄く
                       vec3 lights = texture2D(uNightMap, vMapUv).rgb;
                       gl_FragColor.rgb += lights * night;
                     }
-                    #include <dithering_fragment>`);
+                    #include <tonemapping_fragment>`);
       };
       // 夜景ユニフォームを userData に公開（高画質モードが高解像度へ差し替えるため）。
       mat.userData.nightUniform = uNight;
@@ -1421,6 +1424,7 @@ function setSurfaceMode(on){
     // 退出時に戻せるよう現在の設定を覚え、実スケールへ切り替える。
     realSizeBeforeSurface = realCb.checked;
     realCb.checked = true;
+    realCb.disabled = true;     // 地表モード中は実スケール固定（手動切替で視点が壊れるのを防ぐ）
     applyRealSize(true);
     prevFovBeforeSurface = camera.fov;
     camera.fov = surfFov;
@@ -1434,6 +1438,7 @@ function setSurfaceMode(on){
     camera.near = 0.001;        // 通常の near へ戻す
     camera.updateProjectionMatrix();
     // 実スケール設定を地表モード前の状態へ戻す。
+    realCb.disabled = false;
     realCb.checked = realSizeBeforeSurface;
     applyRealSize(realSizeBeforeSurface);
     resetView();                // 全体ビューへ戻す
@@ -1659,6 +1664,8 @@ function animate(){
   if(showLabels) for(let i=0;i<N_VISIBLE;i++){
     // 月は実スケール表示のときだけ見せる（誇張表示では本体ごと非表示）
     if(BODIES[i].moon && !realSize){ labelEls[i].style.display='none'; continue; }
+    // 地表モードでは足元の地球(自分が立つ天体)のラベルは邪魔なので隠す
+    if(surfaceMode && i===earthIndex){ labelEls[i].style.display='none'; continue; }
     _v.copy(pivots[i].position).project(camera);
     if(_v.z > 1 || _v.z < -1){ labelEls[i].style.display='none'; continue; }
     const x = (_v.x*0.5+0.5)*window.innerWidth;
