@@ -10,7 +10,8 @@
 ## ファイル構成
 
 - [`index.html`](index.html) — 本体（HTML + JavaScript）
-- `textures/2k_earth_daymap.jpg` — 地球の地表テクスチャ（[クレジット](#クレジット)参照）
+- `textures/2k_earth_daymap.jpg` / `2k_earth_nightmap.jpg` — 地球の昼側地表・夜側街明かりテクスチャ（[クレジット](#クレジット)参照）
+- `textures/8k_earth_daymap.jpg` / `8k_earth_nightmap.jpg` — 高画質モード用の8K版（同上）
 
 ## 動作環境
 
@@ -177,5 +178,5 @@ https://ssd.jpl.nasa.gov/api/horizons.api?format=text&COMMAND='399'&EPHEM_TYPE='
 ## クレジット
 
 - 実装: コーディングはすべて [Claude Opus 4.8](https://www.anthropic.com/claude)（Anthropic）を用いて行いました。
-- 地球の地表テクスチャ: [Solar System Scope](https://www.solarsystemscope.com/textures/) の `2k_earth_daymap.jpg` を `textures/` に同梱。Creative Commons Attribution 4.0 International（CC BY 4.0）ライセンスにより利用。
+- 地球の地表テクスチャ: [Solar System Scope](https://www.solarsystemscope.com/textures/) の地球昼側・夜側（街明かり）テクスチャ（2K版・高画質モード用8K版）を `textures/` に同梱。Creative Commons Attribution 4.0 International（CC BY 4.0）ライセンスにより利用。
 - 初期天体データ: [NASA/JPL HORIZONS](https://ssd.jpl.nasa.gov/horizons/)

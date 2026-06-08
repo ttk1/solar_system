@@ -81,6 +81,13 @@
     <input type="checkbox" id="stars" checked>
   </label>
   <label class="row">
+    <span>高画質（地球8K）</span>
+    <input type="checkbox" id="hiRes">
+  </label>
+  <div class="small" id="hiResNote" style="display:none;color:#9cf;">
+    8Kテクスチャを読み込み中…
+  </div>
+  <label class="row">
     <span>銀河公転モード</span>
     <input type="checkbox" id="galaxy">
   </label>
@@ -203,6 +210,9 @@ const BODIES = [
   // 地表テクスチャは Solar System Scope (CC BY 4.0) を同梱 — README にクレジット記載
   { name:'地球',     mass:5.97237e24, gm:3.9860043550702266e14,   radius:3.8, realRadiusKm:6371, color:0x2a6dd6, rotHours:23.9345, tiltDeg:23.44,
     textureUrl:'textures/2k_earth_daymap.jpg',
+    nightUrl:'textures/2k_earth_nightmap.jpg',
+    textureUrlHi:'textures/8k_earth_daymap.jpg',
+    nightUrlHi:'textures/8k_earth_nightmap.jpg',
     pos:[-1.756645157282301e-1, 9.659910118824406e-1, 2.022251612712026e-4],
     vel:[-1.722857157049219e-2,-3.015071218794761e-3,-5.861283850800269e-8] },
   // 月: 地球の運動(本体 vs 地球-月重心)を正しく扱うため質点として追加。moon:true で
@@ -616,11 +626,57 @@ BODIES.forEach((b, idx)=>{
         b.textureUrl,
         loaded => {
           loaded.colorSpace = THREE.SRGBColorSpace; // 色を正しく表示
-          mat.map = loaded;
-          mat.needsUpdate = true;
+          mat.userData.dayTex2k = loaded; // 低解像度を保持（高画質OFFで戻すため）
+          // 高画質モードで既に高解像度を読み込み済みなら上書きしない（読込競合対策）
+          if(!mat.userData.hiResDay){ mat.map = loaded; mat.needsUpdate = true; }
         },
         undefined,
         () => { /* 読込失敗時は手続きテクスチャのまま */ }
+      );
+    }
+    // nightUrl があれば夜側に夜景(街明かり)テクスチャを発光として重ねる。
+    // 標準マテリアルのフラグメントシェーダに onBeforeCompile でフックし、面の
+    // ワールド法線と太陽方向の内積(=昼夜)で nightmap を加算する。太陽方向は
+    // 毎フレーム uSunDir(ワールド)へ更新する(animate 内, mat.userData 経由)。
+    if(b.nightUrl){
+      const uSunDir = { value: new THREE.Vector3(1,0,0) };
+      const uNight = { value: null };
+      const uHasNight = { value: 0 };
+      mat.userData.uSunDir = uSunDir; // animate から太陽方向を流し込む
+      mat.onBeforeCompile = (shader)=>{
+        shader.uniforms.uSunDir = uSunDir;
+        shader.uniforms.uNightMap = uNight;
+        shader.uniforms.uHasNight = uHasNight;
+        // ワールド法線を運ぶ varying を追加
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vWorldNrm;')
+          .replace('#include <beginnormal_vertex>',
+                   '#include <beginnormal_vertex>\nvWorldNrm = mat3(modelMatrix) * objectNormal;');
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>',
+                   '#include <common>\nvarying vec3 vWorldNrm;\nuniform vec3 uSunDir;\nuniform sampler2D uNightMap;\nuniform float uHasNight;')
+          // 最終出力の直前で夜景を加算。ndl<0(太陽の裏側)ほど街明かりを強く。
+          .replace('#include <dithering_fragment>',
+                   `if(uHasNight > 0.5){
+                      float ndl = dot(normalize(vWorldNrm), normalize(uSunDir));
+                      float night = smoothstep(0.10, -0.10, ndl); // 昼=0, 夜=1, 境目は薄く
+                      vec3 lights = texture2D(uNightMap, vMapUv).rgb;
+                      gl_FragColor.rgb += lights * night;
+                    }
+                    #include <dithering_fragment>`);
+      };
+      // 夜景ユニフォームを userData に公開（高画質モードが高解像度へ差し替えるため）。
+      mat.userData.nightUniform = uNight;
+      mat.userData.nightFlag = uHasNight;
+      new THREE.TextureLoader().load(
+        b.nightUrl,
+        loaded => {
+          loaded.colorSpace = THREE.SRGBColorSpace;
+          mat.userData.nightTex2k = loaded; // 低解像度を保持
+          if(!mat.userData.hiResNight){ uNight.value = loaded; uHasNight.value = 1; mat.needsUpdate = true; }
+        },
+        undefined,
+        () => { /* 読込失敗時は夜景なし(uHasNight=0のまま) */ }
       );
     }
   }
@@ -1106,6 +1162,52 @@ document.getElementById('stars').addEventListener('change', e=>{
   starField.visible = e.target.checked;
 });
 
+// 高画質モード: 地球テクスチャを 8K に差し替える。8K は初回ONで遅延ロードして
+// キャッシュし、以後はOFF/ONで 2K⇔8K を即時切替する。
+const hiResNoteEl = document.getElementById('hiResNote');
+const earthMat = meshes[earthIndex].material;
+function applyHiRes(on){
+  const ud = earthMat.userData;
+  if(on){
+    // 既にロード済みなら即適用、未ロードなら読み込み（読み込み中は注記を出す）
+    if(ud.dayTex8k && ud.nightTex8k){
+      ud.hiResDay = true; ud.hiResNight = true;
+      earthMat.map = ud.dayTex8k;
+      if(ud.nightUniform) ud.nightUniform.value = ud.nightTex8k;
+      earthMat.needsUpdate = true;
+    } else {
+      hiResNoteEl.style.display = 'block';
+      const loader = new THREE.TextureLoader();
+      const loadOne = (url)=> new Promise((res,rej)=> loader.load(url,
+        t=>{ t.colorSpace = THREE.SRGBColorSpace; res(t); }, undefined, rej));
+      Promise.all([
+        loadOne('textures/8k_earth_daymap.jpg'),
+        loadOne('textures/8k_earth_nightmap.jpg')
+      ]).then(([day,night])=>{
+        ud.dayTex8k = day; ud.nightTex8k = night;
+        hiResNoteEl.style.display = 'none';
+        // ロード完了時点でまだ高画質ONなら適用（途中でOFFされていたら何もしない）
+        if(document.getElementById('hiRes').checked){
+          ud.hiResDay = true; ud.hiResNight = true;
+          earthMat.map = day;
+          if(ud.nightUniform) ud.nightUniform.value = night;
+          earthMat.needsUpdate = true;
+        }
+      }).catch(()=>{
+        hiResNoteEl.textContent = '8Kテクスチャの読み込みに失敗しました';
+      });
+    }
+  } else {
+    // 2K へ戻す（読み込み済みのものを使う）
+    ud.hiResDay = false; ud.hiResNight = false;
+    hiResNoteEl.style.display = 'none';
+    if(ud.dayTex2k) earthMat.map = ud.dayTex2k;
+    if(ud.nightUniform && ud.nightTex2k) ud.nightUniform.value = ud.nightTex2k;
+    earthMat.needsUpdate = true;
+  }
+}
+document.getElementById('hiRes').addEventListener('change', e=> applyHiRes(e.target.checked));
+
 function clearTrails(){
   trails.forEach(t=>{ t.last=null; t.line.geometry.setDrawRange(0,0); });
   // 銀河公転の累積変位もリセット（モード切替時にトレイルが混線しないように）
@@ -1159,6 +1261,7 @@ document.getElementById('realSize').addEventListener('change', e=>applyRealSize(
   showLabels = document.getElementById('labels').checked;
   if(!showLabels) labelEls.forEach(el=> el.style.display='none');
   starField.visible = document.getElementById('stars').checked;
+  if(document.getElementById('hiRes').checked) applyHiRes(true);
   applyGalaxyMode(document.getElementById('galaxy').checked);
   applyRealSize(document.getElementById('realSize').checked);
 })();
@@ -1516,6 +1619,12 @@ function animate(){
   }
   // 太陽光源を太陽位置へ
   sunLight.position.copy(pivots[0].position);
+
+  // 地球の夜景シェーダへ太陽方向(ワールド)を渡す。太陽位置 − 地球位置を正規化。
+  {
+    const sd = meshes[earthIndex].material.userData.uSunDir;
+    if(sd) sd.value.subVectors(pivots[0].position, pivots[earthIndex].position).normalize();
+  }
 
   // トレイルグループを太陽系基準へ平行移動。トレイル点は (ワールド銀河座標 − trailRef)
   // で蓄積されるので、描画位置 = 格納値 + trailGroup.position。最新点を惑星に一致させ
