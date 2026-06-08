@@ -100,6 +100,20 @@
   <div id="legend"></div>
   <div id="fun">
     <div class="fun-title">🎲 面白機能</div>
+    <label class="row">
+      <span>🌍 地表モード（地球から空を見上げる）</span>
+      <input type="checkbox" id="surface">
+    </label>
+    <div id="surfaceNote" style="display:none;">
+      <div class="small" style="color:#9cf;">ドラッグで首振り / ホイールで視野(ズーム)。自転で星空が流れます。</div>
+      <label class="small">観測 緯度（北緯+） <span id="obsLatVal"></span>
+        <input type="range" id="obsLat" min="-90" max="90" step="1">
+      </label>
+      <label class="small">観測 経度（東経+） <span id="obsLonVal"></span>
+        <input type="range" id="obsLon" min="-180" max="180" step="1">
+      </label>
+      <div class="small">地理座標で指定（例: 東京 35.7, 139.7）。値は OBS_LAT_DEG / OBS_LON_DEG に焼き込めます</div>
+    </div>
     <button id="alignBtn">🪐 次の惑星直列へ</button>
     <button id="cometBtn" style="margin-top:6px;">☄ 彗星を発射</button>
     <label class="row" style="margin-top:6px;">
@@ -676,6 +690,49 @@ BODIES.forEach((b, idx)=>{
   labelEls.push(el);
 });
 
+// ============================================================
+// 地表モード（地球の地表から空を見上げる）
+// ============================================================
+// 地球メッシュの子に「観測者」を置く。観測者はメッシュの自転・傾き・公転位置を
+// すべて自動で継承するので、毎フレーム観測者のワールド変換をカメラに写すだけで
+// 「自転に追従して星空が流れる地上視点」が得られる。
+const earthIndex = BODIES.findIndex(b => b.textureUrl);
+// 観測者の置き場。OBS_LAT_DEG/OBS_LON_DEG は「地理座標」(北緯+・東経+)で指定する。
+// テクスチャの貼り方と自転位相のぶん、地理経度とメッシュのローカル経度はずれるので、
+// placeObserver 内で実測オフセットを当てて変換する:
+//   メッシュ緯度 = 地理緯度        (北緯+ がそのまま上=北極側)
+//   メッシュ経度 = 地理経度 - 270°  (テクスチャ継ぎ目+EARTH_PHASE0 ぶんの位相)
+// 実測の対応: 東京(地理 35.7,139.7) の経度が合う位相。
+const OBS_LON_OFFSET = -270;
+let OBS_LAT_DEG = 35.7;   // 東京(北緯)
+let OBS_LON_DEG = 139.7;  // 東京(東経)
+const observer = new THREE.Object3D();
+// 目の高さ: 地表ちょうど(係数1.0)だと地面が視線に対し接平面になり下半球が見えない。
+// わずかに上(半径の2%)へ上げると地面が下に湾曲して見え、はっきりした地平線になる。
+const OBS_EYE = 1.02;
+function placeObserver(){
+  const r = BODIES[earthIndex].radius * OBS_EYE; // メッシュのローカル半径(pivot.scaleは継承)
+  const lat = OBS_LAT_DEG * Math.PI / 180;                   // 地理緯度→メッシュ緯度
+  const lon = (OBS_LON_DEG + OBS_LON_OFFSET) * Math.PI / 180; // 地理経度→メッシュ経度
+  const cphi = Math.cos(lat);
+  observer.position.set(
+    r * cphi * Math.sin(lon),
+    r * Math.sin(lat),
+    r * cphi * Math.cos(lon)
+  );
+}
+placeObserver();
+meshes[earthIndex].add(observer);
+let surfaceMode = false;
+// 首振り: 観測者ローカルフレーム基準の方位(yaw)・仰角(pitch)。
+//  pitch=+90°で天頂(半径外向き=空)、0°で地平線方向。初期は地平線やや上(地面と空が
+//  両方見える)。
+let surfYaw = 0, surfPitch = 10 * Math.PI / 180;
+let surfFov = 70;            // 地表モードの視野角[deg]（ホイールでズーム）
+let prevFovBeforeSurface = camera.fov;
+const _obsPos = new THREE.Vector3();
+const _surfDir = new THREE.Vector3();
+
 function makeGlowTexture(color){
   const s=128, cv=document.createElement('canvas'); cv.width=s; cv.height=s;
   const ctx=cv.getContext('2d');
@@ -822,6 +879,24 @@ earthAxisSlider.value = Math.round(EARTH_AXIS_LON * 180 / Math.PI);
 earthPhaseSlider.addEventListener('input', applyEarthTune);
 earthAxisSlider.addEventListener('input', applyEarthTune);
 applyEarthTune();
+
+// 地表モードの観測地点つまみ（テクスチャと実位置の合わせ込み用）
+const obsLatSlider = document.getElementById('obsLat');
+const obsLonSlider = document.getElementById('obsLon');
+const obsLatValEl = document.getElementById('obsLatVal');
+const obsLonValEl = document.getElementById('obsLonVal');
+function applyObsLocation(){
+  OBS_LAT_DEG = parseFloat(obsLatSlider.value);
+  OBS_LON_DEG = parseFloat(obsLonSlider.value);
+  placeObserver();
+  obsLatValEl.textContent = `${OBS_LAT_DEG}°`;
+  obsLonValEl.textContent = `${OBS_LON_DEG}°`;
+}
+obsLatSlider.value = OBS_LAT_DEG;
+obsLonSlider.value = OBS_LON_DEG;
+obsLatSlider.addEventListener('input', applyObsLocation);
+obsLonSlider.addEventListener('input', applyObsLocation);
+applyObsLocation();
 
 // メニュー折りたたみ（スマホで画面いっぱいになるのを防ぐ。日付は常時表示）
 const uiEl = document.getElementById('ui');
@@ -1205,8 +1280,114 @@ function resetView(){
 }
 // クリック時: 同じ天体なら解除して既定ビュー、別の天体ならその天体にフォーカス。
 function focusOn(i){
+  if(surfaceMode) return;       // 地表モード中はラベル/凡例クリックを無視
   if(focusIndex === i){ focusIndex = null; resetView(); return; }
   setFocus(i);
+}
+
+// 地表モードの開始/終了。
+let realSizeBeforeSurface = false; // 地表モードに入る前の実スケール設定（退出時に復元）
+function setSurfaceMode(on){
+  surfaceMode = on;
+  document.getElementById('surfaceNote').style.display = on ? 'block' : 'none';
+  const realCb = document.getElementById('realSize');
+  if(on){
+    focusIndex = null;          // 通常フォーカスは解除
+    controls.enabled = false;   // OrbitControls を止め、カメラを直接制御
+    // 地表からの見え方は実スケールが正しい（誇張サイズだと近傍の天体が巨大に映る）。
+    // 退出時に戻せるよう現在の設定を覚え、実スケールへ切り替える。
+    realSizeBeforeSurface = realCb.checked;
+    realCb.checked = true;
+    applyRealSize(true);
+    prevFovBeforeSurface = camera.fov;
+    camera.fov = surfFov;
+    // 実スケールの地球は半径~0.002 units と極小。足元の地面は near=0.001 より近く、
+    // そのままだと地面がクリップされて見えない。地表モード中だけ near を大幅に縮める。
+    camera.near = 1e-6;
+    camera.updateProjectionMatrix();
+  } else {
+    controls.enabled = true;
+    camera.fov = prevFovBeforeSurface;
+    camera.near = 0.001;        // 通常の near へ戻す
+    camera.updateProjectionMatrix();
+    // 実スケール設定を地表モード前の状態へ戻す。
+    realCb.checked = realSizeBeforeSurface;
+    applyRealSize(realSizeBeforeSurface);
+    resetView();                // 全体ビューへ戻す
+  }
+  const cb = document.getElementById('surface');
+  if(cb.checked !== on) cb.checked = on;
+}
+document.getElementById('surface').addEventListener('change', e=> setSurfaceMode(e.target.checked));
+
+// 地表モードの首振り（ドラッグ）とズーム（ホイール）。OrbitController と競合しない
+// よう、surfaceMode のときだけ作用する。ドラッグで yaw/pitch を更新。
+{
+  let dragging = false, lastX = 0, lastY = 0;
+  const cv = renderer.domElement;
+  cv.addEventListener('pointerdown', e=>{
+    if(!surfaceMode) return;
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    cv.setPointerCapture(e.pointerId);
+  });
+  cv.addEventListener('pointermove', e=>{
+    if(!surfaceMode || !dragging) return;
+    const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    // 画面に対し自然な向き: 右ドラッグで右を向く＝yaw減、上ドラッグで上を向く＝pitch増。
+    const k = 0.0025 * (surfFov / 70); // 視野が狭いほど感度を下げる
+    surfYaw   -= dx * k;
+    surfPitch += dy * k;
+    const lim = Math.PI/2 - 0.01;
+    surfPitch = Math.max(-lim, Math.min(lim, surfPitch));
+  });
+  const endDrag = ()=>{ dragging = false; };
+  cv.addEventListener('pointerup', endDrag);
+  cv.addEventListener('pointercancel', endDrag);
+  cv.addEventListener('wheel', e=>{
+    if(!surfaceMode) return;
+    e.preventDefault();
+    surfFov = Math.max(20, Math.min(110, surfFov + Math.sign(e.deltaY) * 4));
+    camera.fov = surfFov;
+    camera.updateProjectionMatrix();
+  }, { passive:false });
+}
+
+// 地表モードのカメラを毎フレーム更新。観測者(地球メッシュの子)のワールド位置に
+// カメラを置き、半径外向きを「上(天頂)」とする局所フレームで yaw/pitch だけ向ける。
+const _planetCenter = new THREE.Vector3();
+const _up = new THREE.Vector3();
+const _north = new THREE.Vector3();
+const _east = new THREE.Vector3();
+const _northT = new THREE.Vector3();
+const _look = new THREE.Vector3();
+const _meshQuat = new THREE.Quaternion();
+function updateSurfaceCamera(){
+  // 観測者のワールド変換を確定（このフレームの自転・公転位置を反映）。
+  observer.updateWorldMatrix(true, false);
+  _obsPos.setFromMatrixPosition(observer.matrixWorld);
+  _planetCenter.copy(pivots[earthIndex].position);
+  // 天頂方向 = 惑星中心→観測者（半径外向き）。
+  _up.subVectors(_obsPos, _planetCenter).normalize();
+  // 自転に追従する接線基準: 惑星の北極(メッシュのローカル+Y)をワールドへ。
+  meshes[earthIndex].getWorldQuaternion(_meshQuat);
+  _north.set(0,1,0).applyQuaternion(_meshQuat);
+  // 接線平面に正射影した東西・南北の基底（自転とともに回る）。
+  _east.crossVectors(_north, _up);
+  if(_east.lengthSq() < 1e-9) _east.set(1,0,0); // 極の特異点回避
+  _east.normalize();
+  _northT.crossVectors(_up, _east).normalize();
+  // yaw: 接線平面内の方位、pitch: 天頂へ向かう仰角。
+  const cp = Math.cos(surfPitch), sp = Math.sin(surfPitch);
+  _look.set(0,0,0)
+    .addScaledVector(_northT, cp * Math.cos(surfYaw))
+    .addScaledVector(_east,   cp * Math.sin(surfYaw))
+    .addScaledVector(_up,     sp)
+    .normalize();
+  camera.position.copy(_obsPos);
+  camera.up.copy(_up);
+  _surfDir.copy(_obsPos).add(_look);
+  camera.lookAt(_surfDir);
 }
 
 // ============================================================
@@ -1326,17 +1507,20 @@ function animate(){
 
   updateComets();
 
-  // 天体フォーカス: 天体の移動ぶんカメラ系(注視点+カメラ位置)を平行移動して追従。
-  // 距離・角度(ズーム率)は保たれ、ユーザーの回転・ズーム操作もそのまま効く。
-  if(focusIndex != null){
-    const pos = pivots[focusIndex].position;
-    _focusDelta.subVectors(pos, focusPrev);
-    controls.target.add(_focusDelta);
-    camera.position.add(_focusDelta);
-    focusPrev.copy(pos);
+  if(surfaceMode){
+    updateSurfaceCamera();
+  } else {
+    // 天体フォーカス: 天体の移動ぶんカメラ系(注視点+カメラ位置)を平行移動して追従。
+    // 距離・角度(ズーム率)は保たれ、ユーザーの回転・ズーム操作もそのまま効く。
+    if(focusIndex != null){
+      const pos = pivots[focusIndex].position;
+      _focusDelta.subVectors(pos, focusPrev);
+      controls.target.add(_focusDelta);
+      camera.position.add(_focusDelta);
+      focusPrev.copy(pos);
+    }
+    controls.update();
   }
-
-  controls.update();
   renderer.render(scene, camera);
   updateDate();
 
