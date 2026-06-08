@@ -77,6 +77,10 @@
     <input type="checkbox" id="labels" checked>
   </label>
   <label class="row">
+    <span>背景の星を表示</span>
+    <input type="checkbox" id="stars" checked>
+  </label>
+  <label class="row">
     <span>銀河公転モード</span>
     <input type="checkbox" id="galaxy">
   </label>
@@ -519,8 +523,8 @@ const trailRef = new THREE.Vector3();
 const _trailLocal = new THREE.Vector3();
 function toTrailLocal(v){ return _trailLocal.copy(v).sub(trailRef); }
 
-// 星空背景
-(function addStars(){
+// 星空背景（オプションで表示ON/OFF。参照を保持して visible を切り替える）
+const starField = (function addStars(){
   const g = new THREE.BufferGeometry();
   const N = 3000, arr = new Float32Array(N*3);
   for(let i=0;i<N;i++){
@@ -532,7 +536,9 @@ function toTrailLocal(v){ return _trailLocal.copy(v).sub(trailRef); }
   }
   g.setAttribute('position', new THREE.BufferAttribute(arr,3));
   const m = new THREE.PointsMaterial({ color:0xffffff, size:2, sizeAttenuation:false });
-  scene.add(new THREE.Points(g,m));
+  const pts = new THREE.Points(g,m);
+  scene.add(pts);
+  return pts;
 })();
 
 // 手続き的テクスチャ生成（簡易）
@@ -1096,6 +1102,10 @@ document.getElementById('labels').addEventListener('change', e=>{
   if(!showLabels) labelEls.forEach(el=> el.style.display='none');
 });
 
+document.getElementById('stars').addEventListener('change', e=>{
+  starField.visible = e.target.checked;
+});
+
 function clearTrails(){
   trails.forEach(t=>{ t.last=null; t.line.geometry.setDrawRange(0,0); });
   // 銀河公転の累積変位もリセット（モード切替時にトレイルが混線しないように）
@@ -1148,6 +1158,7 @@ document.getElementById('realSize').addEventListener('change', e=>applyRealSize(
   trails.forEach(t=> t.line.visible = showTrails);
   showLabels = document.getElementById('labels').checked;
   if(!showLabels) labelEls.forEach(el=> el.style.display='none');
+  starField.visible = document.getElementById('stars').checked;
   applyGalaxyMode(document.getElementById('galaxy').checked);
   applyRealSize(document.getElementById('realSize').checked);
 })();
