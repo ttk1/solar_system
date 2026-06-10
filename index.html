@@ -649,7 +649,9 @@ const labelEls = [];
 const TRAIL_MAX = 1500;
 // トレイルは「一定の軌道距離ごと」に点を打つ（時間基準ではない）。これにより
 // シミュレーション速度を変えてもトレイルの長さがほぼ一定に保たれる（等倍付近で
-// 消えなくなる）。保持される総長 ≈ TRAIL_SEG × TRAIL_MAX [units]。
+// 消えなくなる）。バッファの総長 ≈ TRAIL_SEG × TRAIL_MAX [units]（ただし高速時は
+// 打点間隔が伸びてもっと長い経路を保持しうる）。見た目の長さは updateTrailGradient
+// が「軌道1周(capLen)」を上限に距離ベースで減光して制御する。
 const TRAIL_SEG = 0.3;
 // 1フレームに打つトレイル点の上限。高速早送りでサブステップが数千になっても、点間隔は
 // TRAIL_SEG で頭打ちのため大量に打っても見た目に寄与せず、updateTrail(全頂点コピー)の
@@ -778,19 +780,16 @@ BODIES.forEach((b, idx)=>{
     pivot.add(ring);
   }
 
-  // トレイル。頂点カラーで「末尾(最新)ほど明るいグラデーション」。位置はリングバッファ
-  // で末尾に追加され先頭へ押し出されるので、明るい先端が進み暗い尾が残る＝流れて見える。
+  // トレイル。頂点カラーのグラデーションは毎フレーム updateTrailGradient が
+  // 「最新点からの経路距離」に基づいて塗り直す(初期は全消灯)。加算合成なので
+  // 明るさ0の部分は完全に見えない(黒い筋が背景の星を隠すこともない)。
   const tgeo = new THREE.BufferGeometry();
   tgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_MAX*3),3));
-  const tcol = new Float32Array(TRAIL_MAX*3);
-  const bc = new THREE.Color(b.color);
-  for(let k=0;k<TRAIL_MAX;k++){
-    const amp = 0.05 + 0.95 * (k/(TRAIL_MAX-1)); // 先頭(古)=暗 … 末尾(新)=明
-    tcol[k*3]=bc.r*amp; tcol[k*3+1]=bc.g*amp; tcol[k*3+2]=bc.b*amp;
-  }
-  tgeo.setAttribute('color', new THREE.BufferAttribute(tcol,3));
+  tgeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(TRAIL_MAX*3),3));
   tgeo.setDrawRange(0,0);
-  const tmat = new THREE.LineBasicMaterial({ vertexColors:true, transparent:true, opacity:0.85, depthWrite:false });
+  const tmat = new THREE.LineBasicMaterial({
+    vertexColors:true, transparent:true, opacity:0.85, depthWrite:false,
+    blending:THREE.AdditiveBlending });
   const line = new THREE.Line(tgeo, tmat);
   // ジオメトリのバウンディングスフィアは更新されず、銀河公転で座標が大きく動くと
   // フラスタムカリングで消えるため無効化（トレイルは常に表示したい）。
@@ -799,7 +798,11 @@ BODIES.forEach((b, idx)=>{
   // 打点間隔[units]。月は地球周回(半径~0.12units)が小さく既定の TRAIL_SEG(0.3)では
   // 軌跡が数点の多角形に潰れるため、細かい間隔にして滑らかな周回を描く。
   const seg = b.moon ? 0.015 : TRAIL_SEG;
-  trails.push({ line, last:null, seg });
+  // トレイルの表示長の上限[units] ≈ その天体の軌道1周。これより後方は減光しきって消える。
+  // 月は地球周回の1周(平均距離 0.00257 AU)、他は元期の太陽距離を円軌道とみなした円周。
+  const orbitR = b.moon ? 0.00257 : Math.hypot(b.pos[0], b.pos[1], b.pos[2]);
+  const capLen = 2 * Math.PI * orbitR * SCALE;
+  trails.push({ line, last:null, seg, capLen, baseColor:new THREE.Color(b.color) });
 
   // ラベル（クリックでその天体を中心に）
   const el = document.createElement('div');
@@ -853,6 +856,7 @@ let surfaceMode = false;
 let surfYaw = 0, surfPitch = 10 * Math.PI / 180;
 let surfFov = 70;            // 地表モードの視野角[deg]（ホイールでズーム）
 let prevFovBeforeSurface = camera.fov;
+let realSizeBeforeSurface = false; // 地表モードに入る前の実スケール設定（退出時に復元）
 const _obsPos = new THREE.Vector3();
 const _surfDir = new THREE.Vector3();
 
@@ -937,6 +941,42 @@ function updateTrail(i){
   // 毎フレーム揺れてチカチカする。末尾だけ常に惑星へ固定すれば付け根が一致して安定する。
   arr[last3]=sp.x; arr[last3+1]=sp.y; arr[last3+2]=sp.z;
   t.line.geometry.attributes.position.needsUpdate = true;
+}
+
+// トレイルのグラデーションを毎フレーム塗り直す。明るさは「最新点からの経路距離」で
+// 決め、capLen(≈軌道1周)に達したら0になる2乗カーブで減光する。
+//  - 高速時は打点間隔が伸びる(1フレームの打点回数に上限があるため)が、距離基準なので
+//    見た目の長さは1周以内に保たれる。従来の「点数×間隔」方式では速度を上げるほど
+//    軌跡が何周ぶんも伸びてもつれて見えた。
+//  - 旧方式(インデックス基準・下限0.05の線形)より先端と尾の明暗差がはっきり出る。
+//  - 銀河公転モードは「1周」の概念がない(らせんが伸び続ける)ので全長にわたって減光。
+// 格納座標は trailRef 相対の平行移動なので、隣接点間の距離はワールド距離と一致する。
+const _segLen = new Float32Array(TRAIL_MAX);
+function updateTrailGradient(i){
+  const t = trails[i];
+  if(!t.last || !t.line.visible) return;
+  const pos = t.line.geometry.attributes.position.array;
+  const col = t.line.geometry.attributes.color.array;
+  // 1パス目: 隣接点間の距離と総延長(末尾=最新 から先頭=最古 へ)
+  let total = 0;
+  for(let k=TRAIL_MAX-1; k>0; k--){
+    const a=k*3, b=(k-1)*3;
+    const dx=pos[a]-pos[b], dy=pos[a+1]-pos[b+1], dz=pos[a+2]-pos[b+2];
+    const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    _segLen[k] = len;
+    total += len;
+  }
+  const eff = Math.max(galaxyMode ? total : Math.min(total, t.capLen), 1e-9);
+  // 2パス目: 累積距離→明るさ。x=0(最新)で1、x=1(eff到達)で0の2乗カーブ。
+  let cum = 0;
+  const r=t.baseColor.r, g=t.baseColor.g, bl=t.baseColor.b;
+  for(let k=TRAIL_MAX-1; k>=0; k--){
+    const x = cum / eff;
+    const f = x >= 1 ? 0 : (1-x)*(1-x);
+    col[k*3]=r*f; col[k*3+1]=g*f; col[k*3+2]=bl*f;
+    cum += _segLen[k]; // _segLen[k] は k→k-1 間の距離(k=0では加算不要だがループ終端)
+  }
+  t.line.geometry.attributes.color.needsUpdate = true;
 }
 
 // トレイル基準原点を newRef へ移し替える。格納済み頂点は全て (旧基準相対)→(新基準相対)
@@ -1389,6 +1429,9 @@ document.getElementById('realSize').addEventListener('change', e=>applyRealSize(
   if(document.getElementById('hiRes').checked) applyHiRes(true);
   applyGalaxyMode(document.getElementById('galaxy').checked);
   applyRealSize(document.getElementById('realSize').checked);
+  // 地表モードも復元（realSize より後に行う: モード突入時に実スケールへ強制切替し、
+  // 退出時に戻すための「直前の実スケール設定」を正しく記憶させるため）
+  if(document.getElementById('surface').checked) setSurfaceMode(true);
 })();
 
 window.addEventListener('resize', ()=>{
@@ -1538,7 +1581,6 @@ function focusOn(i){
 }
 
 // 地表モードの開始/終了。
-let realSizeBeforeSurface = false; // 地表モードに入る前の実スケール設定（退出時に復元）
 function setSurfaceMode(on){
   surfaceMode = on;
   document.getElementById('surfaceNote').style.display = on ? 'block' : 'none';
@@ -1769,6 +1811,9 @@ function animate(){
   // 銀河モードoff & フォーカスなしでは trailRef=galaxyDisp=0 → trailGroup.position=0。
   const off = galaxyOffset();
   trailGroup.position.set(trailRef.x - off.x, trailRef.y - off.y, trailRef.z - off.z);
+
+  // トレイルのグラデーション(最新点からの距離ベース減光)を塗り直す
+  if(showTrails) for(let i = galaxyMode ? 0 : 1; i<N_VISIBLE; i++) updateTrailGradient(i);
 
   updateComets();
 
