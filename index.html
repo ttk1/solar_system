@@ -1033,17 +1033,27 @@ const speedPresetsEl = document.getElementById('speedPresets');
 // 1秒あたりに進むシミュレーション時間を読みやすい単位で表す
 function fmtDuration(years){
   const sec = years * YEAR;
+  if(years >= 100)    return `${Math.round(years).toLocaleString()} 年`;
   if(years >= 1)      return `${years.toFixed(2)} 年`;
   if(sec/DAY >= 1)    return `${(sec/DAY).toFixed(2)} 日`;
   if(sec/3600 >= 1)   return `${(sec/3600).toFixed(2)} 時間`;
   if(sec/60 >= 1)     return `${(sec/60).toFixed(2)} 分`;
   return `${sec.toFixed(2)} 秒`;
 }
+// 有効数字3桁程度に丸める（万未満の桁を並べない）
+function sig3(v){ return v >= 100 ? Math.round(v).toLocaleString() : v >= 10 ? v.toFixed(1) : v.toFixed(2); }
+// 倍速を日本語単位(万/億/兆)でコンパクトに表す。大きな数を桁区切りで全部
+// 並べるとパネル幅に収まらず改行してしまうため。
+function fmtRatio(r){
+  if(r < 10000) return r < 10 ? r.toFixed(r < 1.5 ? 2 : 1) : Math.round(r).toLocaleString();
+  if(r < 1e8)   return sig3(r/1e4) + '万';
+  if(r < 1e12)  return sig3(r/1e8) + '億';
+  return sig3(r/1e12) + '兆';
+}
 function applySpeed(){
   yearsPerSecond = Math.pow(10, parseFloat(speedSlider.value));
   const ratio = yearsPerSecond * YEAR; // 実時間に対する倍速（1で等倍）
-  const ratioStr = ratio < 10 ? ratio.toFixed(ratio < 1.5 ? 2 : 1) : Math.round(ratio).toLocaleString();
-  speedVal.textContent = `1秒 = ${fmtDuration(yearsPerSecond)}（実時間の ${ratioStr} 倍速）`;
+  speedVal.textContent = `1秒 = ${fmtDuration(yearsPerSecond)}（${fmtRatio(ratio)}倍速）`;
   // 一致するプリセットボタンをハイライト（スライダー手動操作で一致しなければ全消灯）
   const v = parseFloat(speedSlider.value);
   for(const b of speedPresetsEl.children)
