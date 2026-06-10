@@ -9,44 +9,87 @@
   html, body { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; }
   #ui {
     position: absolute; top: 10px; left: 10px; z-index: 10;
-    color: #eee; background: rgba(10,12,24,0.65); padding: 12px 14px;
-    border-radius: 10px; backdrop-filter: blur(4px); user-select: none;
-    font-size: 13px; line-height: 1.7; min-width: 240px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+    color: #eee; background: rgba(10,12,24,0.72); padding: 12px 14px;
+    border-radius: 12px; backdrop-filter: blur(6px); user-select: none;
+    font-size: 13px; line-height: 1.7; width: 262px;
+    max-width: calc(100vw - 20px);
+    border: 1px solid rgba(110,140,220,0.18);
+    box-shadow: 0 2px 16px rgba(0,0,0,0.55);
     /* 縦に狭い画面(スマホ横向き等)でメニューが画面からあふれないように */
     max-height: calc(100vh - 20px);
     max-height: calc(100dvh - 20px);
     overflow-y: auto;
     box-sizing: border-box;
   }
-  #date { font-size: 18px; font-weight: bold; color: #9fd; letter-spacing: 0.5px; }
+  #ui::-webkit-scrollbar { width: 8px; }
+  #ui::-webkit-scrollbar-thumb { background: #2c3a5e; border-radius: 4px; }
+  #date { font-size: 17px; font-weight: bold; color: #9fd; letter-spacing: 0.5px; white-space: nowrap; }
+  /* 時刻は日付より控えめに(1行に収め、改行させない) */
+  #date .dsub { font-size: 12px; font-weight: normal; color: #8fc; letter-spacing: 0; }
   #uiHead { display:flex; justify-content:space-between; align-items:center; gap:10px; }
   #uiToggle {
     background:#26304d; color:#cde; border:1px solid #3a4a72; border-radius:6px;
     padding:2px 8px; cursor:pointer; font-size:13px; line-height:1.4; flex:0 0 auto;
   }
   #uiToggle:hover { background:#33406a; }
-  #ui.collapsed { min-width:0; }
+  #ui.collapsed { width:auto; }
   #ui.collapsed #uiBody { display:none; }
-  #ui label { display: block; margin-top: 6px; }
-  #ui input[type=range] { width: 100%; }
-  #ui input[type=date] { background:#26304d; color:#cde; border:1px solid #3a4a72; border-radius:6px; padding:2px 6px; font-size:12px; }
+  #ui label { display: block; margin-top: 4px; }
+  #ui label.row { display:flex; }
+  #ui input[type=range] { width: 100%; accent-color:#6e9bff; margin:2px 0; }
+  #ui input[type=date] { background:#26304d; color:#cde; border:1px solid #3a4a72; border-radius:6px; padding:2px 6px; font-size:12px; font-family:inherit; }
   .row { display:flex; justify-content: space-between; align-items:center; gap:8px; }
   .small { color:#9ab; font-size: 11px; }
   button {
     background:#26304d; color:#cde; border:1px solid #3a4a72; border-radius:6px;
-    padding:4px 10px; cursor:pointer; font-size:12px;
+    padding:4px 10px; cursor:pointer; font-size:12px; font-family:inherit;
+    transition:background .12s;
   }
   button:hover { background:#33406a; }
-  #legend { margin-top:8px; font-size:11px; color:#bcd; }
-  #legend span { display:inline-block; margin-right:8px; white-space:nowrap; }
-  #legend span:hover { text-decoration:underline; }   /* クリックで天体にフォーカスできる目印 */
+  button:active { transform:translateY(1px); }
+  button:disabled { opacity:.55; cursor:default; transform:none; }
+  /* セクション区切り */
+  .sec { margin-top:10px; padding-top:8px; border-top:1px solid #2c3a5e; }
+  .sec-title { font-size:10.5px; color:#7e93c4; letter-spacing:1px; margin-bottom:4px; }
+  /* 速度プリセット */
+  .presets { display:flex; gap:4px; margin-top:2px; }
+  .presets button { flex:1; padding:2px 0; font-size:11px; }
+  .presets button.active { background:#3d5ba9; border-color:#6e9bff; color:#fff; }
+  /* 表示トグル: 2列グリッド + スイッチ */
+  #ui .tgl-grid { display:grid; grid-template-columns:1fr 1fr; gap:2px 14px; }
+  #ui .tgl-grid label { display:flex; justify-content:space-between; align-items:center; cursor:pointer; margin:0; padding:2px 0; }
+  .sw { position:relative; display:inline-block; width:30px; height:17px; flex:0 0 auto; }
+  .sw input { position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; }
+  .sw i { position:absolute; inset:0; background:#3a4a72; border-radius:17px; transition:background .15s; pointer-events:none; }
+  .sw i::before { content:''; position:absolute; width:13px; height:13px; left:2px; top:2px; background:#cde; border-radius:50%; transition:transform .15s; }
+  .sw input:checked + i { background:#5b8cff; }
+  .sw input:checked + i::before { transform:translateX(13px); background:#fff; }
+  .sw input:focus-visible + i { outline:2px solid #9fd; }
+  /* 凡例(クリックで追従。追従中はハイライト) */
+  #legend { font-size:11px; color:#bcd; }
+  #legend span.item { display:inline-block; margin:0 2px 2px 0; padding:1px 6px; border-radius:9px; cursor:pointer; white-space:nowrap; }
+  #legend span.item:hover { background:#2c3a5e; }
+  #legend span.item.active { background:#3d5ba9; color:#fff; }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; vertical-align:middle; margin-right:3px; }
   #hint { position:absolute; bottom:10px; left:10px; color:#778; font-size:11px; z-index:10; }
+  #hint .touch { display:none; }
+  @media (pointer: coarse){
+    #hint .mouse { display:none; }
+    #hint .touch { display:inline; }
+  }
+  /* トースト通知(数秒で消える) */
+  #toast {
+    position:fixed; bottom:44px; left:50%; transform:translateX(-50%);
+    background:rgba(20,26,48,0.92); color:#cde; padding:8px 16px; border-radius:8px;
+    font-size:13px; z-index:20; opacity:0; transition:opacity .3s; pointer-events:none;
+    border:1px solid rgba(110,140,220,0.25); white-space:nowrap;
+  }
+  #toast.show { opacity:1; }
+  /* 面白機能 */
   #fun { margin-top:10px; padding-top:8px; border-top:1px solid #3a4a72; }
-  #fun .fun-title { font-size:12px; color:#e9b; margin-bottom:6px; }
-  #fun button { display:block; width:100%; }
-  #fun label { display:block; margin-top:6px; font-size:13px; }
+  #fun .fun-title { font-size:12px; color:#e9b; cursor:pointer; margin-bottom:2px; }
+  #fun button { display:block; width:100%; margin-top:6px; }
+  #fun label { margin-top:6px; font-size:13px; }
   #fun input[type=range] { width:100%; }
 </style>
 </head>
@@ -58,68 +101,64 @@
   </div>
   <div id="uiBody">
   <div class="small" id="elapsed"></div>
-  <label>シミュレーション速度
-    <div class="row"><span class="small" id="speedVal"></span></div>
-    <input type="range" id="speed" min="-7.5" max="3" step="0.01" value="0">
-  </label>
-  <div class="small">スライダー: 対数（左=等倍 … 右=1000年/秒）</div>
-  <div class="row" style="margin-top:8px;">
-    <button id="pause">⏸ 一時停止</button>
-    <button id="reset">↺ リセット</button>
-  </div>
-  <div class="row" style="margin-top:6px;">
-    <button id="now" style="width:100%;">⏩ 現在へ早送り</button>
-  </div>
-  <div class="row" style="margin-top:6px; gap:4px;">
-    <input type="date" id="gotoDate" style="flex:1; min-width:0;">
-    <button id="gotoBtn">移動</button>
-  </div>
-  <label class="row" style="margin-top:8px;">
-    <span>軌道トレイル表示</span>
-    <input type="checkbox" id="trails" checked>
-  </label>
-  <label class="row">
-    <span>天体名を表示</span>
-    <input type="checkbox" id="labels" checked>
-  </label>
-  <label class="row">
-    <span>背景の星を表示</span>
-    <input type="checkbox" id="stars" checked>
-  </label>
-  <label class="row">
-    <span>高画質（地球8K）</span>
-    <input type="checkbox" id="hiRes">
-  </label>
-  <div class="small" id="hiResNote" style="display:none;color:#9cf;">
-    8Kテクスチャを読み込み中…
-  </div>
-  <label class="row">
-    <span>銀河公転モード</span>
-    <input type="checkbox" id="galaxy">
-  </label>
-  <label class="row">
-    <span>実スケール表示</span>
-    <input type="checkbox" id="realSize">
-  </label>
-  <div class="small" id="realSizeNote" style="display:none;color:#fc9;">
-    ※実際の半径で描画。距離に対し極小のため、ほぼ点になります。
-  </div>
-  <details id="earthTune" style="margin-top:8px;">
-    <summary style="cursor:pointer;color:#9ab;font-size:12px;">地球 自転軸の調整</summary>
-    <label>自転位相 <span class="small" id="phaseVal"></span>
-      <input type="range" id="earthPhase" min="-180" max="180" step="1">
+
+  <div class="sec">
+    <div class="sec-title">時間</div>
+    <div class="row">
+      <button id="pause" style="flex:1;">⏸ 一時停止</button>
+      <button id="reset" title="初期状態(2000年元期)に戻す">↺ リセット</button>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <button id="now" style="width:100%;" title="現在の日時まで早送りし、到達後は実時間に追従">⏩ 現在へ早送り</button>
+    </div>
+    <div class="row" style="margin-top:6px; gap:4px;">
+      <input type="date" id="gotoDate" style="flex:1; min-width:0;" title="指定した日付へ移動（過去なら逆回し）">
+      <button id="gotoBtn">移動</button>
+    </div>
+    <label style="margin-top:8px;">速度 <span class="small" id="speedVal"></span>
+      <input type="range" id="speed" min="-7.5" max="3" step="0.01" value="0">
     </label>
-    <label>軸の向き（黄経） <span class="small" id="axisVal"></span>
-      <input type="range" id="earthAxis" min="0" max="360" step="1">
-    </label>
-    <div class="small">合った値をソースの EARTH_PHASE0 / EARTH_AXIS_LON に焼き込めます</div>
-  </details>
-  <div id="legend"></div>
-  <div id="fun">
-    <div class="fun-title">🎲 面白機能</div>
+    <div id="speedPresets" class="presets"></div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">表示</div>
+    <div class="tgl-grid">
+      <label title="軌道トレイル（軌跡）を表示"><span>トレイル</span><span class="sw"><input type="checkbox" id="trails" checked><i></i></span></label>
+      <label title="天体名ラベルを表示"><span>天体名</span><span class="sw"><input type="checkbox" id="labels" checked><i></i></span></label>
+      <label title="星空背景を表示"><span>背景の星</span><span class="sw"><input type="checkbox" id="stars" checked><i></i></span></label>
+      <label title="地球テクスチャを8Kに（初回は読み込みあり）"><span>高画質 8K</span><span class="sw"><input type="checkbox" id="hiRes"><i></i></span></label>
+      <label title="太陽系の銀河公転をトレイルで可視化"><span>銀河公転</span><span class="sw"><input type="checkbox" id="galaxy"><i></i></span></label>
+      <label title="天体を実際の半径比で描画（ほぼ点になります）"><span>実スケール</span><span class="sw"><input type="checkbox" id="realSize"><i></i></span></label>
+    </div>
+    <div class="small" id="hiResNote" style="display:none;color:#9cf;">
+      8Kテクスチャを読み込み中…
+    </div>
+    <div class="small" id="realSizeNote" style="display:none;color:#fc9;">
+      ※実際の半径で描画。距離に対し極小のため、ほぼ点になります。
+    </div>
+    <details id="earthTune" style="margin-top:6px;">
+      <summary style="cursor:pointer;color:#9ab;font-size:12px;">地球 自転軸の調整</summary>
+      <label>自転位相 <span class="small" id="phaseVal"></span>
+        <input type="range" id="earthPhase" min="-180" max="180" step="1">
+      </label>
+      <label>軸の向き（黄経） <span class="small" id="axisVal"></span>
+        <input type="range" id="earthAxis" min="0" max="360" step="1">
+      </label>
+      <div class="small">合った値をソースの EARTH_PHASE0 / EARTH_AXIS_LON に焼き込めます</div>
+    </details>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">天体（クリックで追従 / 再クリックで解除）</div>
+    <div id="legend"></div>
+  </div>
+
+  <details id="fun" open>
+    <summary class="fun-title">🎲 面白機能</summary>
     <label class="row">
       <span>🌍 地表モード（地球から空を見上げる）</span>
-      <input type="checkbox" id="surface">
+      <span class="sw"><input type="checkbox" id="surface"><i></i></span>
     </label>
     <div id="surfaceNote" style="display:none;">
       <div class="small" style="color:#9cf;">ドラッグで首振り / ホイールで視野(ズーム)。自転で星空が流れます。</div>
@@ -132,10 +171,10 @@
       <div class="small">地理座標で指定（例: 東京 35.7, 139.7）。値は OBS_LAT_DEG / OBS_LON_DEG に焼き込めます</div>
     </div>
     <button id="alignBtn">🪐 次の惑星直列へ</button>
-    <button id="cometBtn" style="margin-top:6px;">☄ 彗星を発射</button>
+    <button id="cometBtn">☄ 彗星を発射</button>
     <label class="row" style="margin-top:6px;">
       <span>☄ ランダムに飛来</span>
-      <input type="checkbox" id="autoComet">
+      <span class="sw"><input type="checkbox" id="autoComet"><i></i></span>
     </label>
     <label style="margin-top:8px;">☀ 太陽質量 <span class="small" id="sunMassVal"></span>
       <input type="range" id="sunMass" min="0" max="10" step="0.1" value="1">
@@ -144,10 +183,14 @@
       <input type="range" id="gMul" min="0" max="10" step="0.1" value="1">
     </label>
     <button id="physReset" style="margin-top:4px;">物理を等倍に戻す</button>
-  </div>
+  </details>
   </div>
 </div>
-<div id="hint">マウス: 左ドラッグ=回転 / 右ドラッグ=移動 / ホイール=拡大縮小</div>
+<div id="hint">
+  <span class="mouse">左ドラッグ: 回転 / 右ドラッグ: 移動 / ホイール: ズーム / Space: 一時停止 / Esc: 追従解除</span>
+  <span class="touch">ドラッグ: 回転 / 2本指: 移動・ズーム / 天体名タップ: 追従</span>
+</div>
+<div id="toast"></div>
 
 <script type="importmap">
 {
@@ -843,12 +886,26 @@ const legend = document.getElementById('legend');
 const legendSpans = [];
 BODIES.forEach((b,i)=>{
   const span=document.createElement('span');
-  span.style.cursor='pointer';
+  span.className='item';
   span.innerHTML=`<span class="dot" style="background:#${b.color.toString(16).padStart(6,'0')}"></span>${b.name}`;
   span.addEventListener('click', ()=>focusOn(i));
   legend.appendChild(span);
   legendSpans.push(span);
 });
+// 追従中の天体を凡例上でハイライトする。focusIndex を変えたら呼ぶ。
+function updateLegendActive(){
+  legendSpans.forEach((s,i)=> s.classList.toggle('active', i===focusIndex));
+}
+
+// 画面下部のトースト通知（数秒で自動的に消える）
+const toastEl = document.getElementById('toast');
+let _toastTimer = 0;
+function toast(msg, ms = 3500){
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(()=> toastEl.classList.remove('show'), ms);
+}
 
 // ============================================================
 // トレイル更新
@@ -918,9 +975,10 @@ function updateDate(){
   const da = String(d.getUTCDate()).padStart(2,'0');
   const hh = String(d.getUTCHours()).padStart(2,'0');
   const mi = String(d.getUTCMinutes()).padStart(2,'0');
-  // 表示は分単位なので、文字列が変わったときだけ DOM に書く（毎フレームの無駄な書き込み回避）
-  const dateText = `${y}年${mo}月${da}日 ${hh}:${mi} JST`;
-  if(dateText !== _lastDateText){ dateEl.textContent = dateText; _lastDateText = dateText; }
+  // 表示は分単位なので、文字列が変わったときだけ DOM に書く（毎フレームの無駄な書き込み回避）。
+  // 時刻部分は小さめのサブ表示にして、パネル幅でも1行に収まるようにする。
+  const dateText = `${y}年${mo}月${da}日 <span class="dsub">${hh}:${mi} JST</span>`;
+  if(dateText !== _lastDateText){ dateEl.innerHTML = dateText; _lastDateText = dateText; }
   const years = simSeconds/YEAR;
   const elapsedText = `元期(2000年)から ${years>=0?'+':''}${years.toFixed(2)} 年`;
   if(elapsedText !== _lastElapsedText){ elapsedEl.textContent = elapsedText; _lastElapsedText = elapsedText; }
@@ -931,6 +989,7 @@ function updateDate(){
 // ============================================================
 const speedSlider = document.getElementById('speed');
 const speedVal = document.getElementById('speedVal');
+const speedPresetsEl = document.getElementById('speedPresets');
 // 1秒あたりに進むシミュレーション時間を読みやすい単位で表す
 function fmtDuration(years){
   const sec = years * YEAR;
@@ -945,8 +1004,20 @@ function applySpeed(){
   const ratio = yearsPerSecond * YEAR; // 実時間に対する倍速（1で等倍）
   const ratioStr = ratio < 10 ? ratio.toFixed(ratio < 1.5 ? 2 : 1) : Math.round(ratio).toLocaleString();
   speedVal.textContent = `1秒 = ${fmtDuration(yearsPerSecond)}（実時間の ${ratioStr} 倍速）`;
+  // 一致するプリセットボタンをハイライト（スライダー手動操作で一致しなければ全消灯）
+  const v = parseFloat(speedSlider.value);
+  for(const b of speedPresetsEl.children)
+    b.classList.toggle('active', Math.abs(parseFloat(b.dataset.v) - v) < 0.005);
 }
 speedSlider.addEventListener('input', applySpeed);
+// よく使う速度のプリセット（スライダーは対数なので log10 値を持たせる）
+for(const [label, yps] of [['等倍', 1/YEAR], ['1日/秒', 1/365.25], ['1年/秒', 1], ['100年/秒', 100]]){
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.dataset.v = Math.log10(yps);
+  b.addEventListener('click', ()=>{ speedSlider.value = b.dataset.v; applySpeed(); });
+  speedPresetsEl.appendChild(b);
+}
 applySpeed();
 
 // 地球 自転軸の調整つまみ
@@ -1003,6 +1074,28 @@ pauseBtn.addEventListener('click', ()=>{
   pauseBtn.textContent = running ? '⏸ 一時停止' : '▶ 再生';
 });
 
+// キーボードショートカット: Space=一時停止/再生、Esc=追従解除（地表モード中は終了）。
+// テキスト系入力(日付など)とチェックボックス(Spaceが切替操作)にフォーカスがある
+// ときは奪わない。スライダーは Space に既定動作がないので受け付ける。
+window.addEventListener('keydown', e=>{
+  const t = e.target;
+  const isFormText = t && (t.tagName === 'TEXTAREA'
+    || (t.tagName === 'INPUT' && t.type !== 'range'));
+  if(isFormText) return;
+  if(e.code === 'Space'){
+    e.preventDefault(); // ページスクロール防止
+    pauseBtn.click();
+  } else if(e.key === 'Escape'){
+    if(surfaceMode) setSurfaceMode(false);
+    else if(focusIndex != null){ focusIndex = null; resetView(); updateLegendActive(); }
+  }
+});
+// クリックしたボタンからフォーカスを外す（直後の Space がボタン再実行にならないように）
+document.addEventListener('click', e=>{
+  const t = e.target;
+  if(t && (t.tagName === 'BUTTON' || (t.tagName === 'INPUT' && t.type === 'checkbox'))) t.blur();
+});
+
 document.getElementById('reset').addEventListener('click', ()=>{
   initState();   // 全天体（摂動天体含む）を元期の状態へ戻し、重心ドリフトも除去
   simSeconds = 0;
@@ -1011,6 +1104,7 @@ document.getElementById('reset').addEventListener('click', ()=>{
   clearTrails();
   clearComets();
   computeAccelerations();
+  updateLegendActive();
   // カメラも既定ビューへ。天体は元期の位置へ飛ぶので、ズームしたままだと
   // 虚空を見続けることになる（地表モード中はカメラを観測者が握るため不要）。
   if(!surfaceMode) resetView();
@@ -1131,7 +1225,11 @@ alignBtn.addEventListener('click', ()=>{
   setTimeout(()=>{
     const targetT = findNextAlignment();
     alignBtn.disabled = false;
-    if(targetT == null){ alignTempLabel('🪐 直列が見つかりません'); return; }
+    if(targetT == null){
+      alignBtn.textContent = ALIGN_BTN_LABEL;
+      toast('🪐 直列が見つかりません');
+      return;
+    }
     startCatchup(()=>targetT, ()=>{
       running = false; pauseBtn.textContent = '▶ 再生'; // 直列の瞬間で一時停止
       const d = new Date(EPOCH.getTime() + targetT*1000);
@@ -1139,22 +1237,19 @@ alignBtn.addEventListener('click', ()=>{
       // 到達時に実際の集まり角度を再確認。閾値を明確に超えていたら、探索時と
       // 配置がズレた(物理倍率を極端にいじった等)とみなし、失敗として知らせる。
       if(deg > 100){
-        alignTempLabel(`🪐 直列を捉えられず（${deg}°）`);
+        alignBtn.textContent = ALIGN_BTN_LABEL;
+        toast(`🪐 直列を捉えられず（${deg}°）`);
       } else {
         alignBtn.textContent = `🪐 直列 ${d.getUTCFullYear()}年`
           + `${String(d.getUTCMonth()+1).padStart(2,'0')}月${String(d.getUTCDate()).padStart(2,'0')}日`
           + `（${deg}°）`;
+        toast(`🪐 惑星直列に到達（全惑星が ${deg}° の弧に集合）`);
       }
     });
   }, 30);
 });
 const ALIGN_BTN_LABEL = '🪐 次の惑星直列へ';
 alignBtn.textContent = ALIGN_BTN_LABEL;
-// 失敗メッセージなどを一時表示し、数秒後に既定ラベルへ戻す
-function alignTempLabel(msg){
-  alignBtn.textContent = msg;
-  setTimeout(()=>{ if(!catchup) alignBtn.textContent = ALIGN_BTN_LABEL; }, 4000);
-}
 
 // 面白機能: 太陽質量・重力定数の倍率
 const sunMassSlider = document.getElementById('sunMass');
@@ -1380,7 +1475,10 @@ function clearComets(){
   comets.length = 0;
 }
 
-document.getElementById('cometBtn').addEventListener('click', spawnComet);
+document.getElementById('cometBtn').addEventListener('click', ()=>{
+  if(comets.length >= COMET_MAX){ toast(`☄ 彗星は同時に${COMET_MAX}個までです（リセットで全消去）`); return; }
+  spawnComet();
+});
 
 // ランダム飛来オプション。シミュレーション時間で平均約3年に1個のペース。
 let autoComet = false;
@@ -1422,6 +1520,7 @@ function setFocus(i){
   // 一時停止中でも即座に高精度になるよう、トレイル基準をこの天体へ寄せておく
   // （通常はメインループが毎フレーム rebase する）。
   if(showTrails) rebaseTrails(toSceneGalaxy(state[i].p));
+  updateLegendActive();
 }
 // 既定ビュー（フォーカス解除時）
 function resetView(){
@@ -1434,7 +1533,7 @@ function resetView(){
 // クリック時: 同じ天体なら解除して既定ビュー、別の天体ならその天体にフォーカス。
 function focusOn(i){
   if(surfaceMode) return;       // 地表モード中はラベル/凡例クリックを無視
-  if(focusIndex === i){ focusIndex = null; resetView(); return; }
+  if(focusIndex === i){ focusIndex = null; resetView(); updateLegendActive(); return; }
   setFocus(i);
 }
 
@@ -1446,6 +1545,7 @@ function setSurfaceMode(on){
   const realCb = document.getElementById('realSize');
   if(on){
     focusIndex = null;          // 通常フォーカスは解除
+    updateLegendActive();
     controls.enabled = false;   // OrbitControls を止め、カメラを直接制御
     // 地表からの見え方は実スケールが正しい（誇張サイズだと近傍の天体が巨大に映る）。
     // 退出時に戻せるよう現在の設定を覚え、実スケールへ切り替える。
