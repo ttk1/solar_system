@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>太陽系シミュレーター</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪐</text></svg>">
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; }
   #ui {
@@ -12,6 +13,11 @@
     border-radius: 10px; backdrop-filter: blur(4px); user-select: none;
     font-size: 13px; line-height: 1.7; min-width: 240px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+    /* 縦に狭い画面(スマホ横向き等)でメニューが画面からあふれないように */
+    max-height: calc(100vh - 20px);
+    max-height: calc(100dvh - 20px);
+    overflow-y: auto;
+    box-sizing: border-box;
   }
   #date { font-size: 18px; font-weight: bold; color: #9fd; letter-spacing: 0.5px; }
   #uiHead { display:flex; justify-content:space-between; align-items:center; gap:10px; }
@@ -451,7 +457,11 @@ controls.dampingFactor = 0.08;
 // 画面スケール: 1 AU = SCALE three.js units
 // 水星の近日点(≈0.31AU)が太陽の表示半径に入り込まないよう、やや広めに取る。
 const SCALE = 48;
-function toScene(v){ return new THREE.Vector3(v.x/AU*SCALE, v.z/AU*SCALE, -v.y/AU*SCALE); }
+// toScene の戻り値は共有スクラッチ（次の toScene/toSceneGalaxy 呼び出しで上書きされる）。
+// 毎フレーム多数呼ばれる（早送り時はトレイル打点×天体数）ため、都度 new せず再利用して
+// GC 負荷を抑える。値を保持したい場合は呼び出し側で copy()/clone() すること。
+const _toSceneOut = new THREE.Vector3();
+function toScene(v){ return _toSceneOut.set(v.x/AU*SCALE, v.z/AU*SCALE, -v.y/AU*SCALE); }
 
 // 地球の自転位相オフセット[rad]。昼夜が日時に合うよう調整（画面のつまみで調整可）。
 // 元期 2000-01-01 00:00 TDB を基準とした既定値。厳密な恒星時の再現が目的ではなく、
@@ -898,6 +908,7 @@ function rebaseTrails(newRef, tol = 0){
 // ============================================================
 const dateEl = document.getElementById('date');
 const elapsedEl = document.getElementById('elapsed');
+let _lastDateText = '', _lastElapsedText = '';
 function updateDate(){
   // シミュレーション時刻は UTC 基準。JST(=UTC+9)へ9時間ずらし、UTCゲッタで読み出して
   // 日本時間の年月日・時分を表示する（日付も JST に合わせてずれる）。
@@ -907,9 +918,12 @@ function updateDate(){
   const da = String(d.getUTCDate()).padStart(2,'0');
   const hh = String(d.getUTCHours()).padStart(2,'0');
   const mi = String(d.getUTCMinutes()).padStart(2,'0');
-  dateEl.textContent = `${y}年${mo}月${da}日 ${hh}:${mi} JST`;
+  // 表示は分単位なので、文字列が変わったときだけ DOM に書く（毎フレームの無駄な書き込み回避）
+  const dateText = `${y}年${mo}月${da}日 ${hh}:${mi} JST`;
+  if(dateText !== _lastDateText){ dateEl.textContent = dateText; _lastDateText = dateText; }
   const years = simSeconds/YEAR;
-  elapsedEl.textContent = `元期(2000年)から ${years>=0?'+':''}${years.toFixed(2)} 年`;
+  const elapsedText = `元期(2000年)から ${years>=0?'+':''}${years.toFixed(2)} 年`;
+  if(elapsedText !== _lastElapsedText){ elapsedEl.textContent = elapsedText; _lastElapsedText = elapsedText; }
 }
 
 // ============================================================
@@ -997,6 +1011,9 @@ document.getElementById('reset').addEventListener('click', ()=>{
   clearTrails();
   clearComets();
   computeAccelerations();
+  // カメラも既定ビューへ。天体は元期の位置へ飛ぶので、ズームしたままだと
+  // 虚空を見続けることになる（地表モード中はカメラを観測者が握るため不要）。
+  if(!surfaceMode) resetView();
 });
 
 // 指定の日時(UTC)に対応するシミュレーション秒
@@ -1027,12 +1044,15 @@ nowBtn.addEventListener('click', ()=>{
 
 // 指定日付へ移動（過去なら逆回し）。到達したら一時停止。
 const gotoDate = document.getElementById('gotoDate');
-document.getElementById('gotoBtn').addEventListener('click', ()=>{
+const gotoBtn = document.getElementById('gotoBtn');
+gotoBtn.addEventListener('click', ()=>{
   if(!gotoDate.value) return; // 未入力
   const [y,m,d] = gotoDate.value.split('-').map(Number);
   const targetT = dateToSimSeconds(new Date(Date.UTC(y, m-1, d, 12, 0, 0)));
   startCatchup(()=>targetT, ()=>{ running = false; pauseBtn.textContent = '▶ 再生'; });
 });
+// 日付入力で Enter を押したら移動（ボタンクリックと同じ）
+gotoDate.addEventListener('keydown', e=>{ if(e.key === 'Enter') gotoBtn.click(); });
 
 // ----- 惑星直列（このシミュレーション内で実際に集まる瞬間を計算で探す） -----
 // 簡易積分のため固定日付（実暦の2161年など）では誤差で直列にならない。そこで
@@ -1074,6 +1094,10 @@ function restoreState(snap){
 // 現在以降で直列になる最初の simSeconds を探す（見つからなければ null）。
 function findNextAlignment(){
   const snap = snapshotState();
+  // 彗星は直列判定に無関係なので探索中は一時退避する。残したまま stepPhysics を回すと
+  // 彗星だけ数百年ぶん進んだ位置が探索後も残ってしまう（snapshotState は惑星のみ保存）。
+  // 退避すれば積分コストも省ける。終了後にそのまま戻す。
+  const savedComets = comets.splice(0, comets.length);
   // スキャン幅。基本0.2日だが、太陽質量/重力を上げると公転が速くなる(周期∝1/√GM)ため
   // それに合わせて細かくしないと極小を取り逃して誤検出する。倍率に応じて縮める。
   const SCAN_DT = 0.2 * DAY / Math.sqrt(Math.max(0.05, gMul * sunMassMul));
@@ -1095,6 +1119,7 @@ function findNextAlignment(){
     wasAligned = aligned;
   }
   restoreState(snap);
+  comets.push(...savedComets);
   return found;
 }
 
@@ -1179,6 +1204,8 @@ function applyHiRes(on){
       if(ud.nightUniform) ud.nightUniform.value = ud.nightTex8k;
       earthMat.needsUpdate = true;
     } else {
+      // 前回の読み込みが失敗していた場合に備え、注記を毎回「読み込み中…」へ戻す
+      hiResNoteEl.textContent = '8Kテクスチャを読み込み中…';
       hiResNoteEl.style.display = 'block';
       const loader = new THREE.TextureLoader();
       const loadOne = (url)=> new Promise((res,rej)=> loader.load(url,
@@ -1535,18 +1562,21 @@ function animate(){
   if(running){
     // このフレームで進めるべきシミュレーション秒数
     let simAdvance;
+    // 到達時コールバック。物理ステップを目標時刻まで進め切った「後」に呼ぶ
+    // （onArrive が alignmentSpread 等で最新の天体配置を読むため、ここでは予約だけする）。
+    let arriveCb = null;
     if(catchup){
       // 目標simSecondsまで高速で詰める（過去ならマイナス方向に逆回し）。
       // 残りに比例した速度で ease-out 的に進め、到達したら onArrive を呼ぶ。
       const remaining = catchup.target() - simSeconds; // 秒（符号付き: 負=過去）
       const absRem = Math.abs(remaining);
       if(absRem <= 0){
-        simAdvance = 0; const cb = catchup.onArrive; catchup = null; cb && cb();
+        simAdvance = 0; arriveCb = catchup.onArrive; catchup = null;
       } else {
         const dir = Math.sign(remaining);
         const yps = Math.min(Math.max((absRem/YEAR) / 4, 2), 500); // 約4秒で到達、上下限あり
         simAdvance = dir * Math.min(realDt * yps * YEAR, absRem);
-        if(Math.abs(simAdvance) >= absRem){ const cb = catchup.onArrive; catchup = null; cb && cb(); }
+        if(Math.abs(simAdvance) >= absRem){ arriveCb = catchup.onArrive; catchup = null; }
       }
     } else {
       simAdvance = realDt * yearsPerSecond * YEAR;
@@ -1600,6 +1630,7 @@ function animate(){
       }
     }
     maybeSpawnComets(simAdvance); // ランダム飛来（順方向のみ）
+    if(arriveCb) arriveCb(); // 目標時刻まで進め切った後に到達処理（予約は catchup 判定で実施済み）
   }
 
   // メッシュ位置更新 + 自転（太陽系原点系: 銀河変位を加えず原点付近に保つ）
