@@ -160,11 +160,14 @@
       ※実際の半径で描画。距離に対し極小のため、ほぼ点になります。
     </div>
     <details id="earthTune" style="margin-top:6px;">
-      <summary style="cursor:pointer;color:#9ab;font-size:12px;">地球 自転軸の調整</summary>
-      <label>自転位相 <span class="small" id="phaseVal"></span>
+      <summary style="cursor:pointer;color:#9ab;font-size:12px;">詳細設定</summary>
+      <label>星の明るさ <span class="small" id="starBrightVal"></span>
+        <input type="range" id="starBright" min="0.3" max="5" step="0.05" value="1.3">
+      </label>
+      <label>地球 自転位相 <span class="small" id="phaseVal"></span>
         <input type="range" id="earthPhase" min="-180" max="180" step="1">
       </label>
-      <label>軸の向き（黄経） <span class="small" id="axisVal"></span>
+      <label>地球 軸の向き（黄経） <span class="small" id="axisVal"></span>
         <input type="range" id="earthAxis" min="0" max="360" step="1">
       </label>
       <div class="small">合った値をソースの EARTH_PHASE0 / EARTH_AXIS_LON に焼き込めます</div>
@@ -615,7 +618,17 @@ const _trailLocal = new THREE.Vector3();
 function toTrailLocal(v){ return _trailLocal.copy(v).sub(trailRef); }
 
 // 星空背景（オプションで表示ON/OFF。参照を保持して visible を切り替える）
-const starField = (function addStars(){
+// 実在の恒星カタログ stars.json（HYG Database 由来、V≤6.5 の約9000星、CC BY-SA 4.0
+// — README にクレジット記載、生成は tools/make_stars.js）を非同期で読み込み、
+// 実際の星座が見える星空を描く。読めない環境（file:// 直開き等）では
+// 従来の手続き生成ランダム星空のまま動く（地球テクスチャと同じフォールバック方針）。
+const STAR_SPHERE_R = 9000;    // 天球半径 [units]（惑星より十分遠く、カメラ far 内）
+const OBLIQUITY = 23.4392911 * Math.PI / 180; // 黄道傾斜(J2000)。赤道座標→黄道座標の変換用
+let starUniforms = null;       // 固有運動用に経過年数を毎フレーム渡す（カタログ読込後に設定）
+const starField = new THREE.Group();
+scene.add(starField);
+// まず手続き生成のランダム星空を即時表示（カタログが読めたら置き換える）
+(function addProceduralStars(){
   const g = new THREE.BufferGeometry();
   const N = 3000, arr = new Float32Array(N*3);
   for(let i=0;i<N;i++){
@@ -627,10 +640,96 @@ const starField = (function addStars(){
   }
   g.setAttribute('position', new THREE.BufferAttribute(arr,3));
   const m = new THREE.PointsMaterial({ color:0xffffff, size:2, sizeAttenuation:false });
-  const pts = new THREE.Points(g,m);
-  scene.add(pts);
-  return pts;
+  starField.add(new THREE.Points(g,m));
 })();
+// 実カタログの読み込みと差し替え
+fetch('stars.json')
+  .then(r => { if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+  .then(data => {
+    const stars = data.stars, n = stars.length;
+    const pos  = new Float32Array(n*3);  // 星の方向 × 天球半径
+    const col  = new Float32Array(n*3);  // 色（等級による減光を乗算済み・加算合成前提）
+    const pm   = new Float32Array(n*3);  // 固有運動の接線速度 [units/年]
+    const size = new Float32Array(n);    // 点の大きさ [px]
+    const cosE = Math.cos(OBLIQUITY), sinE = Math.sin(OBLIQUITY);
+    const MAS = 4.84813681e-9;           // 1ミリ秒角 [rad]
+    // 赤道座標系(J2000)のベクトルを x軸まわり -ε で黄道座標へ回し、toScene と
+    // 同じ軸の入れ替え (x, z, -y) でシーン系に写して格納する
+    const putScene = (out, o, xe, ye, ze, s)=>{
+      const yec = ye*cosE + ze*sinE, zec = -ye*sinE + ze*cosE;
+      out[o] = xe*s; out[o+1] = zec*s; out[o+2] = -yec*s;
+    };
+    for(let i=0;i<n;i++){
+      const [ra, dec, mag, rgb, pmraMas, pmdecMas] = stars[i];
+      const ca = Math.cos(ra), sa = Math.sin(ra);
+      const cd = Math.cos(dec), sd = Math.sin(dec);
+      putScene(pos, i*3, cd*ca, cd*sa, sd, STAR_SPHERE_R);
+      // 固有運動 [rad/年] を東向き（赤経方向、赤緯余弦込み）と北向き（赤緯方向）の
+      // 接線単位ベクトルに分配 → シミュレーション経過年数に応じてシェーダーで動かす
+      const pa = pmraMas*MAS, pd = pmdecMas*MAS;
+      putScene(pm, i*3,
+        pa*(-sa) + pd*(-sd*ca),
+        pa*( ca) + pd*(-sd*sa),
+                   pd*( cd), STAR_SPHERE_R);
+      // 明るさ: 等級差を実際(1等級=2.51倍)より緩く圧縮して暗い星も見えるように。
+      // 全体の明るさは「詳細設定 > 星の明るさ」スライダー(uBright)で別途乗算する
+      const b = Math.min(1.23, Math.pow(10, -0.4*mag*0.45));
+      col[i*3]   = ((rgb>>16)&255)/255 * b;
+      col[i*3+1] = ((rgb>> 8)&255)/255 * b;
+      col[i*3+2] = ( rgb     &255)/255 * b;
+      size[i] = 2.0 + (6.5-mag)*0.55;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    g.setAttribute('color', new THREE.BufferAttribute(col,3));
+    g.setAttribute('aPm', new THREE.BufferAttribute(pm,3));
+    g.setAttribute('aSize', new THREE.BufferAttribute(size,1));
+    starUniforms = {
+      uYears:   { value: 0 },
+      uPxRatio: { value: renderer.getPixelRatio() },
+      uBright:  { value: parseFloat(document.getElementById('starBright').value) },
+    };
+    const m = new THREE.ShaderMaterial({
+      uniforms: starUniforms,
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      // logarithmicDepthBuffer 使用時は対応チャンクを入れないと深度が合わず、
+      // 星が惑星より手前に描かれてしまう
+      vertexShader: `
+        #include <common>
+        #include <logdepthbuf_pars_vertex>
+        attribute float aSize;
+        attribute vec3 aPm;
+        uniform float uYears;
+        uniform float uPxRatio;
+        varying vec3 vColor;
+        void main(){
+          vColor = color;
+          vec3 p = position + aPm * uYears; // 固有運動（±2000年程度なら接線近似で十分）
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+          gl_PointSize = aSize * uPxRatio;
+          #include <logdepthbuf_vertex>
+        }`,
+      fragmentShader: `
+        #include <common>
+        #include <logdepthbuf_pars_fragment>
+        uniform float uBright;
+        varying vec3 vColor;
+        void main(){
+          #include <logdepthbuf_fragment>
+          vec2 d = gl_PointCoord - 0.5;
+          float a = exp(-dot(d,d)*14.0) - 0.06; // 中心が明るく縁が柔らかく消える点
+          if(a <= 0.0) discard;
+          gl_FragColor = vec4(vColor * uBright * a, 1.0);
+        }`,
+    });
+    for(const c of starField.children){ c.geometry.dispose(); c.material.dispose(); }
+    starField.clear();
+    starField.add(new THREE.Points(g, m));
+  })
+  .catch(err => console.warn('stars.json を読み込めないため手続き生成の星空で動作します:', err));
 
 // 手続き的テクスチャ生成（簡易）
 function makePlanetTexture(baseColor, opts={}){
@@ -1163,6 +1262,17 @@ for(const [label, yps] of [['等倍', 1/YEAR], ['1日/秒', 1/365.25], ['1年/�
   speedPresetsEl.appendChild(b);
 }
 applySpeed();
+
+// 星の明るさつまみ（詳細設定）。実カタログの星空にだけ効く（フォールバックの
+// ランダム星空は対象外）。読み込み完了前に動かした値も uniforms 生成時に反映される。
+const starBrightSlider = document.getElementById('starBright');
+const starBrightValEl = document.getElementById('starBrightVal');
+function applyStarBright(){
+  starBrightValEl.textContent = `×${parseFloat(starBrightSlider.value).toFixed(2)}`;
+  if(starUniforms) starUniforms.uBright.value = parseFloat(starBrightSlider.value);
+}
+starBrightSlider.addEventListener('input', applyStarBright);
+applyStarBright();
 
 // 地球 自転軸の調整つまみ
 const earthPhaseSlider = document.getElementById('earthPhase');
@@ -1728,6 +1838,8 @@ const urlParams = (function applyUrlSettings(){
   if(sun != null) sunMassSlider.value = sun;
   if(g != null) gMulSlider.value = g;
   if(sun != null || g != null) applyPhysMul();
+  const sb = num('starbright');
+  if(sb != null){ starBrightSlider.value = sb; applyStarBright(); }
   // 地表モードの視線。surfFov は setSurfaceMode が camera.fov へ反映するため先に設定。
   const yaw = num('yaw'), pitch = num('pitch'), fov = num('fov');
   if(yaw != null) surfYaw = yaw * Math.PI / 180;
@@ -1805,6 +1917,7 @@ function buildShareUrl(){
   }
   if(sunMassMul !== 1) qp.set('sun', sunMassSlider.value);
   if(gMul !== 1) qp.set('g', gMulSlider.value);
+  if(parseFloat(starBrightSlider.value) !== 1.3) qp.set('starbright', starBrightSlider.value);
   return location.href.split(/[?#]/)[0] + '?' + qp.toString();
 }
 function copyText(text){
@@ -2261,6 +2374,9 @@ function animate(){
   if(showTrails) for(let i = galaxyMode ? 0 : 1; i<N_VISIBLE; i++) updateTrailGradient(i);
 
   updateComets();
+
+  // 恒星の固有運動: シミュレーション経過年数をシェーダーへ（実カタログ読込後のみ）
+  if(starUniforms) starUniforms.uYears.value = simSeconds / YEAR;
 
   if(surfaceMode){
     updateSurfaceCamera();
