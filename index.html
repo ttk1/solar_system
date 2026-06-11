@@ -997,6 +997,9 @@ let surfYaw = 0, surfPitch = 10 * Math.PI / 180;
 let surfFov = 70;            // 地表モードの視野角[deg]（ホイールでズーム）
 let prevFovBeforeSurface = camera.fov;
 let realSizeBeforeSurface = false; // 地表モードに入る前の実スケール設定（退出時に復元）
+// 地表モードの速度上限: 1時間/秒（速度スライダーの log10(年/秒) 値）。これより
+// 速いと空の回転で目が回るため、突入時にここまで下げる。
+const SURF_MAX_SPEED_LOG = Math.log10(1 / (365.25 * 24));
 const _obsPos = new THREE.Vector3();
 const _surfDir = new THREE.Vector3();
 
@@ -2111,6 +2114,12 @@ function setSurfaceMode(on){
     // そのままだと地面がクリップされて見えない。地表モード中だけ near を大幅に縮める。
     camera.near = 1e-6;
     camera.updateProjectionMatrix();
+    // 速度が速すぎると空が回りすぎて目が回るので、上限(1時間/秒)に抑える。
+    if(parseFloat(speedSlider.value) > SURF_MAX_SPEED_LOG){
+      speedSlider.value = SURF_MAX_SPEED_LOG;
+      applySpeed();
+      toast('⏱ 目が回らないよう速度を 1時間/秒 に下げました');
+    }
   } else {
     controls.enabled = true;
     camera.fov = prevFovBeforeSurface;
