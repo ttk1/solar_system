@@ -1865,18 +1865,42 @@ function setSurfaceMode(on){
 }
 document.getElementById('surface').addEventListener('change', e=> setSurfaceMode(e.target.checked));
 
-// 地表モードの首振り（ドラッグ）とズーム（ホイール）。OrbitController と競合しない
-// よう、surfaceMode のときだけ作用する。ドラッグで yaw/pitch を更新。
+// 地表モードの首振り（ドラッグ）とズーム（ホイール/2本指ピンチ）。OrbitController と
+// 競合しないよう、surfaceMode のときだけ作用する。ポインタを Map で追跡し、
+// 1本なら yaw/pitch の首振り、2本ならピンチで視野角(FOV)ズーム。
 {
-  let dragging = false, lastX = 0, lastY = 0;
+  const pointers = new Map(); // pointerId -> {x, y}
+  let lastX = 0, lastY = 0;   // 1本指ドラッグの前回位置
+  let pinchDist = 0;          // ピンチ中の前回の2点間距離
   const cv = renderer.domElement;
+  const setFov = f=>{
+    surfFov = Math.max(20, Math.min(110, f));
+    camera.fov = surfFov;
+    camera.updateProjectionMatrix();
+  };
   cv.addEventListener('pointerdown', e=>{
     if(!surfaceMode) return;
-    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    pointers.set(e.pointerId, {x: e.clientX, y: e.clientY});
     cv.setPointerCapture(e.pointerId);
+    if(pointers.size === 1){ lastX = e.clientX; lastY = e.clientY; }
+    else if(pointers.size === 2){
+      const [a, b] = [...pointers.values()];
+      pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+    }
   });
   cv.addEventListener('pointermove', e=>{
-    if(!surfaceMode || !dragging) return;
+    if(!surfaceMode) return;
+    const p = pointers.get(e.pointerId);
+    if(!p) return;
+    p.x = e.clientX; p.y = e.clientY;
+    if(pointers.size >= 2){
+      // ピンチズーム: 指の間隔の変化率を FOV に反映（広げる=ズームイン=FOV減）
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if(pinchDist > 0 && d > 0) setFov(surfFov * pinchDist / d);
+      pinchDist = d;
+      return;
+    }
     const dx = e.clientX - lastX, dy = e.clientY - lastY;
     lastX = e.clientX; lastY = e.clientY;
     // 画面に対し自然な向き: 右ドラッグで右を向く＝yaw減、上ドラッグで上を向く＝pitch増。
@@ -1886,15 +1910,21 @@ document.getElementById('surface').addEventListener('change', e=> setSurfaceMode
     const lim = Math.PI/2 - 0.01;
     surfPitch = Math.max(-lim, Math.min(lim, surfPitch));
   });
-  const endDrag = ()=>{ dragging = false; };
+  const endDrag = e=>{
+    pointers.delete(e.pointerId);
+    // 2本→1本に減ったら、残った指の位置からドラッグを再開（視点の飛びを防ぐ）
+    if(pointers.size === 1){
+      const [p] = pointers.values();
+      lastX = p.x; lastY = p.y;
+    }
+    pinchDist = 0;
+  };
   cv.addEventListener('pointerup', endDrag);
   cv.addEventListener('pointercancel', endDrag);
   cv.addEventListener('wheel', e=>{
     if(!surfaceMode) return;
     e.preventDefault();
-    surfFov = Math.max(20, Math.min(110, surfFov + Math.sign(e.deltaY) * 4));
-    camera.fov = surfFov;
-    camera.updateProjectionMatrix();
+    setFov(surfFov + Math.sign(e.deltaY) * 4);
   }, { passive:false });
 }
 
