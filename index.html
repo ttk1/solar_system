@@ -26,10 +26,13 @@
   }
   #ui::-webkit-scrollbar { width: 8px; }
   #ui::-webkit-scrollbar-thumb { background: #2c3a5e; border-radius: 4px; }
-  #date { font-size: 17px; font-weight: bold; color: #9fd; letter-spacing: 0.5px; white-space: nowrap;
-    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  /* 時刻は日付より控えめに(1行に収め、改行させない) */
-  #date .dsub { font-size: 12px; font-weight: normal; color: #8fc; letter-spacing: 0; }
+  /* 幅が足りないときは時刻(.dsub)だけ2行目へ折り返す(省略はしない) */
+  #date { font-size: 17px; font-weight: bold; color: #9fd; letter-spacing: 0.5px;
+    flex: 1 1 auto; min-width: 0; line-height: 1.35; }
+  #date .dmain { white-space: nowrap; }
+  /* 時刻は日付より控えめに(途中では改行させない) */
+  #date .dsub { font-size: 12px; font-weight: normal; color: #8fc; letter-spacing: 0;
+    white-space: nowrap; display: inline-block; }
   /* ヘッダ(日付+折りたたみボタン)はパネル内スクロールしても上に張り付く。
      これでメニューをどれだけスクロールしても閉じるボタンに常に手が届く。 */
   #uiHead { display:flex; justify-content:space-between; align-items:center; gap:10px;
@@ -1099,8 +1102,8 @@ function updateDate(){
   const hh = String(d.getUTCHours()).padStart(2,'0');
   const mi = String(d.getUTCMinutes()).padStart(2,'0');
   // 表示は分単位なので、文字列が変わったときだけ DOM に書く（毎フレームの無駄な書き込み回避）。
-  // 時刻部分は小さめのサブ表示にして、パネル幅でも1行に収まるようにする。
-  const dateText = `${y}年${mo}月${da}日 <span class="dsub">${hh}:${mi} JST</span>`;
+  // 時刻部分は小さめのサブ表示。幅が足りなければ CSS 側で時刻だけ2行目へ折り返す。
+  const dateText = `<span class="dmain">${y}年${mo}月${da}日</span> <span class="dsub">${hh}:${mi} JST</span>`;
   if(dateText !== _lastDateText){ dateEl.innerHTML = dateText; _lastDateText = dateText; }
   const years = simSeconds/YEAR;
   const elapsedText = `元期(2000年)から ${years>=0?'+':''}${years.toFixed(2)} 年`;
