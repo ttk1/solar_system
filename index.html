@@ -663,6 +663,8 @@ const pivots = [];
 const meshes = [];
 const trails = [];
 const labelEls = [];
+// 太陽のグロー/光条スプライト(明滅アニメーション用に参照を保持)
+let sunGlowSprite = null, sunSpikeSprite = null;
 const TRAIL_MAX = 1500;
 // トレイルは「一定の軌道距離ごと」に点を打つ（時間基準ではない）。これにより
 // シミュレーション速度を変えてもトレイルの長さがほぼ一定に保たれる（等倍付近で
@@ -687,7 +689,8 @@ BODIES.forEach((b, idx)=>{
   const geo = new THREE.SphereGeometry(r, 48, 32);
   let mat;
   if(b.emissive){
-    mat = new THREE.MeshBasicMaterial({ color:b.color });
+    // 太陽: 単色だとランプのようにのっぺりするので、粒状斑+黒点の手続きテクスチャを貼る
+    mat = new THREE.MeshBasicMaterial({ map: makeSunSurfaceTexture(b.color) });
   } else {
     // まず手続きテクスチャで初期化（外部画像の読込前・読込失敗時のフォールバック）
     const tex = makePlanetTexture(b.color, { bands: b.bands });
@@ -766,14 +769,24 @@ BODIES.forEach((b, idx)=>{
   pivot.add(mesh);          // 自転は mesh.rotation.y（=傾いた自転軸まわり）
   meshes.push(mesh);
 
-  // 太陽グロー
+  // 太陽グロー(白熱コア+コロナの多層グラデーション)と光条(回折スパイク)。
+  // どちらも加算合成+深度テストありなので、日食時には月のシルエットに部分的に
+  // 隠され、はみ出した光がコロナのように見える。スケールは animate でゆらぎを乗せる。
   if(b.emissive){
-    const glowMat = new THREE.SpriteMaterial({
-      map: makeGlowTexture(b.color), color:0xffffff, transparent:true,
-      blending:THREE.AdditiveBlending, depthWrite:false });
-    const glow = new THREE.Sprite(glowMat);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: makeSunGlowTexture(), color:0xffffff, transparent:true,
+      blending:THREE.AdditiveBlending, depthWrite:false }));
+    glow.userData.baseScale = r*6;
     glow.scale.set(r*6, r*6, 1);
     mesh.add(glow);
+    sunGlowSprite = glow;
+    const spikes = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: makeSunSpikesTexture(), color:0xffffff, transparent:true,
+      blending:THREE.AdditiveBlending, depthWrite:false, opacity:0.6 }));
+    spikes.userData.baseScale = r*9;
+    spikes.scale.set(r*9, r*9, 1);
+    mesh.add(spikes);
+    sunSpikeSprite = spikes;
   }
 
   // 土星の環: pivot 直下（赤道面）に置く。自転(mesh)の影響を受けず、
@@ -877,15 +890,68 @@ let realSizeBeforeSurface = false; // 地表モードに入る前の実スケー
 const _obsPos = new THREE.Vector3();
 const _surfDir = new THREE.Vector3();
 
-function makeGlowTexture(color){
-  const s=128, cv=document.createElement('canvas'); cv.width=s; cv.height=s;
+// 太陽の表面: 粒状斑(明暗のまだら)と少数の黒点を描いた手続きテクスチャ
+function makeSunSurfaceTexture(baseColor){
+  const size=256, cv=document.createElement('canvas'); cv.width=size; cv.height=size;
+  const ctx=cv.getContext('2d');
+  const c=new THREE.Color(baseColor);
+  ctx.fillStyle=`rgb(${c.r*255|0},${c.g*255|0},${c.b*255|0})`;
+  ctx.fillRect(0,0,size,size);
+  // 粒状斑: 細かい明暗ゆらぎ
+  for(let i=0;i<3500;i++){
+    const x=Math.random()*size, y=Math.random()*size, r=Math.random()*2.2+0.5;
+    const d=(Math.random()-0.5)*0.22;
+    const cc=c.clone(); cc.offsetHSL((Math.random()-0.5)*0.02, 0, d);
+    ctx.fillStyle=`rgba(${cc.r*255|0},${cc.g*255|0},${cc.b*255|0},0.45)`;
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  }
+  // 黒点: まばらに暗い斑点
+  for(let i=0;i<6;i++){
+    const x=Math.random()*size, y=size*(0.3+Math.random()*0.4); // 低緯度帯に寄せる
+    const r=2+Math.random()*4;
+    const g=ctx.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0,'rgba(60,30,5,0.55)');
+    g.addColorStop(1,'rgba(60,30,5,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+  }
+  return new THREE.CanvasTexture(cv);
+}
+// 太陽グロー: 中心の白熱コアから橙のコロナへ多層に減衰するグラデーション
+function makeSunGlowTexture(){
+  const s=256, cv=document.createElement('canvas'); cv.width=s; cv.height=s;
   const ctx=cv.getContext('2d');
   const g=ctx.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2);
-  const c=new THREE.Color(color);
-  g.addColorStop(0,`rgba(${c.r*255|0},${c.g*255|0},${c.b*255|0},1)`);
-  g.addColorStop(0.3,`rgba(${c.r*255|0},${c.g*255|0},${c.b*255|0},0.5)`);
+  g.addColorStop(0.00,'rgba(255,255,250,1)');
+  g.addColorStop(0.10,'rgba(255,244,214,0.90)');
+  g.addColorStop(0.22,'rgba(255,214,120,0.50)');
+  g.addColorStop(0.40,'rgba(255,170,70,0.18)');
+  g.addColorStop(0.70,'rgba(255,140,50,0.05)');
   g.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle=g; ctx.fillRect(0,0,s,s);
+  return new THREE.CanvasTexture(cv);
+}
+// 太陽の光条(回折スパイク): 縦横の強い針と斜め45°の弱い針。カメラのレンズで
+// 太陽を見たときの「眩しさ」の記号として効く。
+function makeSunSpikesTexture(){
+  const s=256, cv=document.createElement('canvas'); cv.width=s; cv.height=s;
+  const ctx=cv.getContext('2d');
+  ctx.globalCompositeOperation='lighter';
+  const spike=(rot, len, thin, alpha)=>{
+    ctx.save();
+    ctx.translate(s/2,s/2); ctx.rotate(rot); ctx.scale(1, thin); // 縦に潰して針にする
+    const g=ctx.createRadialGradient(0,0,0, 0,0,len);
+    g.addColorStop(0, `rgba(255,250,235,${alpha})`);
+    g.addColorStop(0.4, `rgba(255,220,150,${alpha*0.35})`);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle=g;
+    ctx.fillRect(-len,-len,len*2,len*2);
+    ctx.restore();
+  };
+  spike(0,          s/2,     0.035, 0.95);
+  spike(Math.PI/2,  s/2,     0.035, 0.95);
+  spike(Math.PI/4,  s/2*0.6, 0.05,  0.35);
+  spike(-Math.PI/4, s/2*0.6, 0.05,  0.35);
   return new THREE.CanvasTexture(cv);
 }
 function makeRingTexture(color){
@@ -1577,6 +1643,9 @@ function applyRealSize(on){
       factor = realUnits / BODIES[i].radius;
     }
     pivots[i].scale.setScalar(factor);
+    // 太陽の光条(スパイク)は実スケール表示のときだけ。誇張表示の大きな太陽では
+    // 主張が強すぎるため(明滅も animate 側で realSize のときのみ適用)。
+    if(i === 0 && sunSpikeSprite) sunSpikeSprite.visible = on;
     // 月は誇張表示だと地球周回半径(~0.12units)に対し大きすぎて地球にめり込むため、
     // 実スケール表示のときだけ見せる（本体・ラベル・トレイル・凡例）。物理計算は常に有効。
     if(BODIES[i].moon){
@@ -1973,6 +2042,24 @@ function animate(){
   }
   // 太陽光源を太陽位置へ
   sunLight.position.copy(pivots[0].position);
+
+  // 太陽の明滅(ビカビカ感): 周期が互いに素な正弦波を重ねた疑似ランダムなゆらぎを
+  // グローと光条のスケールに乗せる(±数%)。実時間基準なのでシミュ速度に依存しない。
+  // 光条の表示とあわせて実スケール表示のときだけ(誇張表示では静かなグローのみ)。
+  if(sunGlowSprite){
+    if(realSize){
+      const ts = now * 0.001;
+      const f1 = 1 + 0.025*Math.sin(ts*6.3) + 0.016*Math.sin(ts*14.7+1.7) + 0.009*Math.sin(ts*23.1+4.2);
+      const g1 = sunGlowSprite.userData.baseScale * f1;
+      sunGlowSprite.scale.set(g1, g1, 1);
+      const f2 = 1 + 0.045*Math.sin(ts*9.1+0.8) + 0.025*Math.sin(ts*17.3+2.9);
+      const g2 = sunSpikeSprite.userData.baseScale * f2;
+      sunSpikeSprite.scale.set(g2, g2, 1);
+    } else {
+      const b = sunGlowSprite.userData.baseScale;
+      sunGlowSprite.scale.set(b, b, 1);
+    }
+  }
 
   // 地球の夜景シェーダへ太陽方向(ワールド)を渡す。太陽位置 − 地球位置を正規化。
   {
