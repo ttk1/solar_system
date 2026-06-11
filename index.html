@@ -169,6 +169,7 @@
         <input type="range" id="obsLon" min="-180" max="180" step="1">
       </label>
       <div class="small">地理座標で指定（例: 東京 35.7, 139.7）。値は OBS_LAT_DEG / OBS_LON_DEG に焼き込めます</div>
+      <button id="eclipseBtn">🌑 次の日食へ早送り</button>
     </div>
     <button id="alignBtn">🪐 次の惑星直列へ</button>
     <button id="cometBtn">☄ 彗星を発射</button>
@@ -1300,6 +1301,131 @@ alignBtn.addEventListener('click', ()=>{
 });
 const ALIGN_BTN_LABEL = '🪐 次の惑星直列へ';
 alignBtn.textContent = ALIGN_BTN_LABEL;
+
+// ----- 日食探索（地表モード用: 観測地点から見て月が太陽に重なる瞬間を探す） -----
+const moonIndex = BODIES.findIndex(b => b.moon);
+const R_SUN_M   = BODIES[0].realRadiusKm * 1000;
+const R_MOON_M  = BODIES[moonIndex].realRadiusKm * 1000;
+const R_EARTH_M = BODIES[earthIndex].realRadiusKm * 1000;
+
+// 現在の simSeconds / state / 観測地点設定から、観測者の物理座標[m]と天頂方向を計算。
+// 描画側(observer メッシュ)とは独立に、レンダラと同じ式(自転位相・地軸・地理座標)で
+// 導く。探索は描画を介さず物理だけを進めるため、メッシュの姿勢に依存できない。
+const _obsLocal = new THREE.Vector3();
+const _obsTiltQ = new THREE.Quaternion();
+const _obsSpinQ = new THREE.Quaternion();
+function observerPhysPos(outPos, outUp){
+  const phi = OBS_LAT_DEG * Math.PI/180, lam = OBS_LON_DEG * Math.PI/180;
+  const cphi = Math.cos(phi);
+  _obsLocal.set(cphi*Math.cos(lam), Math.sin(phi), -cphi*Math.sin(lam)); // メッシュローカル
+  const turns = simSeconds / (BODIES[earthIndex].rotHours * 3600);
+  const spin = (turns - Math.floor(turns)) * 2*Math.PI;
+  _obsTiltQ.setFromUnitVectors(_yAxis, EARTH_AXIS);
+  _obsSpinQ.setFromAxisAngle(_yAxis, spin + EARTH_PHASE0);
+  _obsTiltQ.multiply(_obsSpinQ);
+  _obsLocal.applyQuaternion(_obsTiltQ);              // シーン系の天頂方向
+  outUp.set(_obsLocal.x, -_obsLocal.z, _obsLocal.y); // シーン→物理座標系の逆写像
+  outPos.copy(state[earthIndex].p).addScaledVector(outUp, R_EARTH_M);
+}
+
+const _ecO = new THREE.Vector3(), _ecUp = new THREE.Vector3();
+const _ecS = new THREE.Vector3(), _ecM = new THREE.Vector3();
+// 地心から見た太陽と月の離角[rad]。新月かつ黄道近傍でだけ小さくなる粗いスクリーニング用。
+function geoSunMoonSep(){
+  _ecS.subVectors(state[0].p, state[earthIndex].p);
+  _ecM.subVectors(state[moonIndex].p, state[earthIndex].p);
+  return _ecS.angleTo(_ecM);
+}
+// 観測地点から見た太陽・月の離角と日食判定。
+// 食の条件: 太陽が地平線上 かつ 離角 < 太陽の視半径 + 月の視半径（部分食の開始条件）。
+function topoEclipseInfo(){
+  observerPhysPos(_ecO, _ecUp);
+  _ecS.subVectors(state[0].p, _ecO);
+  _ecM.subVectors(state[moonIndex].p, _ecO);
+  const sep = _ecS.angleTo(_ecM);
+  const thS = Math.asin(Math.min(1, R_SUN_M / _ecS.length()));   // 太陽の視半径
+  const thM = Math.asin(Math.min(1, R_MOON_M / _ecM.length()));  // 月の視半径
+  const sunUp = _ecS.dot(_ecUp) > 0;                             // 太陽が地平線上か
+  return { sep, thS, thM, sunUp, eclipse: sunUp && sep < thS + thM };
+}
+
+// 現在以降で観測地点から見える次の日食(最大食=離角最小の瞬間)を探す。なければ null。
+// 2段階探索: 地心離角が GEO_ENTER 未満（月の視差~1°+視半径の和~0.53°+余裕。日食が
+// 起こりうる新月接近ゾーン）の間だけ細かく刻んで観測地点の食を判定し、それ以外は
+// 粗い刻みで飛ばす。ゾーン幅は約7時間あるので粗い刻みでも取り逃さない。
+function findNextEclipse(){
+  const snap = snapshotState();
+  const savedComets = comets.splice(0, comets.length); // 彗星は退避(直列探索と同じ理由)
+  // 重力倍率を上げると月の公転が速くなりゾーン通過も速くなるため刻みを縮める
+  const sc = 1 / Math.sqrt(Math.max(0.05, gMul));
+  const COARSE_DT = 7200 * sc, FINE_DT = 120 * sc;  // [s]
+  const GEO_ENTER = 1.8 * Math.PI / 180;
+  const LIMIT = simSeconds + 20 * YEAR; // 部分日食は同一地点でも普通数年に一度はある
+  let found = null;
+  while(simSeconds < LIMIT){
+    if(geoSunMoonSep() < GEO_ENTER){
+      // ゾーン内: 細かく刻んで食の間の離角最小(=最大食)を追う
+      let best = null;
+      while(simSeconds < LIMIT && geoSunMoonSep() < GEO_ENTER){
+        stepPhysics(FINE_DT);
+        const e = topoEclipseInfo();
+        if(e.eclipse && (!best || e.sep < best.sep)) best = { t: simSeconds, sep: e.sep };
+      }
+      if(best){ found = best; break; }
+    } else {
+      stepPhysics(COARSE_DT);
+    }
+  }
+  restoreState(snap);
+  comets.push(...savedComets);
+  return found;
+}
+
+// 地表カメラを太陽の方角へ向け、最大ズームにする(日食到達時)。メッシュの姿勢は
+// このフレームの描画前段階では未更新のことがあるため、物理 state から直接計算する。
+const _ptSun = new THREE.Vector3(), _ptUp = new THREE.Vector3();
+const _ptEast = new THREE.Vector3(), _ptNorthT = new THREE.Vector3();
+function pointSurfaceCameraAtSun(){
+  observerPhysPos(_ecO, _ecUp);
+  _ptSun.subVectors(state[0].p, _ecO).normalize();
+  _ptSun.set(_ptSun.x, _ptSun.z, -_ptSun.y);   // 物理→シーン系
+  _ptUp.set(_ecUp.x, _ecUp.z, -_ecUp.y);       // 天頂(シーン系)
+  // updateSurfaceCamera と同じ接線基底(東・北)で太陽方向を yaw/pitch に変換
+  _ptEast.crossVectors(EARTH_AXIS, _ptUp);
+  if(_ptEast.lengthSq() < 1e-9) _ptEast.set(1,0,0);
+  _ptEast.normalize();
+  _ptNorthT.crossVectors(_ptUp, _ptEast).normalize();
+  surfYaw = Math.atan2(_ptSun.dot(_ptEast), _ptSun.dot(_ptNorthT));
+  surfPitch = Math.asin(Math.max(-1, Math.min(1, _ptSun.dot(_ptUp))));
+  surfFov = 20; // 最大ズームで太陽を見る
+  camera.fov = surfFov;
+  camera.updateProjectionMatrix();
+}
+
+const eclipseBtn = document.getElementById('eclipseBtn');
+const ECLIPSE_BTN_LABEL = '🌑 次の日食へ早送り';
+eclipseBtn.addEventListener('click', ()=>{
+  if(!surfaceMode) return;
+  eclipseBtn.disabled = true;
+  eclipseBtn.textContent = '🌑 探索中…';
+  // 探索は同期処理なので、UI更新を挟んでから実行（直列探索と同じ）
+  setTimeout(()=>{
+    const found = findNextEclipse();
+    eclipseBtn.disabled = false;
+    eclipseBtn.textContent = ECLIPSE_BTN_LABEL;
+    if(!found){ toast('🌑 今後20年では、この地点から見える日食が見つかりません'); return; }
+    startCatchup(()=>found.t, ()=>{
+      running = false; pauseBtn.textContent = '▶ 再生'; // 最大食の瞬間で一時停止
+      pointSurfaceCameraAtSun();
+      const e = topoEclipseInfo(); // 到達時の実際の配置で食の種類を判定
+      const kind = e.sep <= e.thM - e.thS ? '皆既日食'
+                 : e.sep <= e.thS - e.thM ? '金環日食' : '部分日食';
+      const d = new Date(EPOCH.getTime() + found.t*1000 + 9*3600*1000);
+      toast(`🌑 ${kind} — ${d.getUTCFullYear()}年${d.getUTCMonth()+1}月${d.getUTCDate()}日 `
+        + `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')} JST（最大食）`, 8000);
+    });
+  }, 30);
+});
 
 // 面白機能: 太陽質量・重力定数の倍率
 const sunMassSlider = document.getElementById('sunMass');
