@@ -6,10 +6,12 @@
 <title>太陽系シミュレーター</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪐</text></svg>">
 <style>
-  html, body { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; }
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    /* モバイルブラウザの自動フォント拡大を無効化(パネル内の横あふれ防止) */
+    -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   #ui {
     position: absolute; top: 10px; left: 10px; z-index: 10;
-    color: #eee; background: rgba(10,12,24,0.72); padding: 12px 14px;
+    color: #eee; background: rgba(10,12,24,0.72);
     border-radius: 12px; backdrop-filter: blur(6px); user-select: none;
     font-size: 13px; line-height: 1.7; width: 262px;
     max-width: calc(100vw - 20px);
@@ -19,14 +21,28 @@
     max-height: calc(100vh - 20px);
     max-height: calc(100dvh - 20px);
     overflow-y: auto;
+    overflow-x: hidden; /* 横スクロールはさせない(あふれた場合は省略表示) */
     box-sizing: border-box;
   }
   #ui::-webkit-scrollbar { width: 8px; }
   #ui::-webkit-scrollbar-thumb { background: #2c3a5e; border-radius: 4px; }
-  #date { font-size: 17px; font-weight: bold; color: #9fd; letter-spacing: 0.5px; white-space: nowrap; }
+  #date { font-size: 17px; font-weight: bold; color: #9fd; letter-spacing: 0.5px; white-space: nowrap;
+    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   /* 時刻は日付より控えめに(1行に収め、改行させない) */
   #date .dsub { font-size: 12px; font-weight: normal; color: #8fc; letter-spacing: 0; }
-  #uiHead { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  /* ヘッダ(日付+折りたたみボタン)はパネル内スクロールしても上に張り付く。
+     これでメニューをどれだけスクロールしても閉じるボタンに常に手が届く。 */
+  #uiHead { display:flex; justify-content:space-between; align-items:center; gap:10px;
+    position: sticky; top: 0; z-index: 1;
+    padding: 12px 14px 6px;
+    background: rgba(10,12,24,0.82); backdrop-filter: blur(6px);
+    border-radius: 12px 12px 0 0; }
+  #ui.collapsed #uiHead { padding-bottom: 12px; }
+  #uiBody { padding: 0 14px 12px; }
+  /* タッチ端末では折りたたみボタンを大きめにして押しやすく */
+  @media (pointer: coarse){
+    #uiToggle { padding: 6px 14px; font-size: 15px; }
+  }
   #uiToggle {
     background:#26304d; color:#cde; border:1px solid #3a4a72; border-radius:6px;
     padding:2px 8px; cursor:pointer; font-size:13px; line-height:1.4; flex:0 0 auto;
