@@ -204,6 +204,10 @@
     </label>
     <button id="physReset" style="margin-top:4px;">物理を等倍に戻す</button>
   </details>
+
+  <div class="sec">
+    <button id="shareBtn" style="width:100%;" title="現在の日時と設定をURLにしてコピー。開いた側は同じ日時までシミュレーションを回して再現します">🔗 共有リンクをコピー</button>
+  </div>
   </div>
 </div>
 <div id="hint">
@@ -1665,6 +1669,55 @@ function applyRealSize(on){
 }
 document.getElementById('realSize').addEventListener('change', e=>applyRealSize(e.target.checked));
 
+// ============================================================
+// URL共有: 日時と設定をクエリパラメータで引き継ぐ
+// ============================================================
+// 天体位置は URL に載せず、開いた側が元期から数値積分（既存の早送り）を回して
+// 同じ配置を再現する。日時だけあれば全天体の状態が決まるのがシミュレーションの利点。
+// ただし遠い日時は早送りに実時間がかかるため、元期から±SHARE_MAX_YEARS に制限する。
+const SHARE_MAX_YEARS = 2000;
+// URL に載せる表示トグル: [要素id, パラメータ名, 既定値]。既定値と違うものだけ載せる。
+const SHARE_TOGGLES = [
+  ['trails','trails',true], ['labels','labels',true], ['stars','stars',true],
+  ['hiRes','hires',false],  ['galaxy','galaxy',false], ['realSize','real',false],
+  ['surface','surface',false], ['autoComet','comet',false],
+];
+
+// クエリパラメータの設定値を DOM（チェックボックス・スライダー）へ反映する。
+// この直後の syncControlsFromDOM が DOM の状態を内部変数と見た目へ反映するので、
+// ここでは「DOM に書く + apply系を呼ぶ」だけでよい。日時(t)と追従(focus)は
+// 起動処理の最後（さらに下）で扱う。
+const urlParams = (function applyUrlSettings(){
+  const qp = new URLSearchParams(location.search);
+  if(![...qp.keys()].length) return null;
+  const num = key=>{
+    if(!qp.has(key)) return null;
+    const v = parseFloat(qp.get(key));
+    return Number.isFinite(v) ? v : null;
+  };
+  for(const [id, key] of SHARE_TOGGLES)
+    if(qp.has(key)) document.getElementById(id).checked = qp.get(key) !== '0';
+  const speed = num('speed');
+  if(speed != null){ speedSlider.value = speed; applySpeed(); } // range入力はmin/maxへ自動クランプ
+  const lat = num('lat'), lon = num('lon');
+  if(lat != null) obsLatSlider.value = lat;
+  if(lon != null) obsLonSlider.value = lon;
+  if(lat != null || lon != null) applyObsLocation();
+  const sun = num('sun'), g = num('g');
+  if(sun != null) sunMassSlider.value = sun;
+  if(g != null) gMulSlider.value = g;
+  if(sun != null || g != null) applyPhysMul();
+  // 地表モードの視線。surfFov は setSurfaceMode が camera.fov へ反映するため先に設定。
+  const yaw = num('yaw'), pitch = num('pitch'), fov = num('fov');
+  if(yaw != null) surfYaw = yaw * Math.PI / 180;
+  if(pitch != null){
+    const lim = Math.PI/2 - 0.01;
+    surfPitch = Math.max(-lim, Math.min(lim, pitch * Math.PI / 180));
+  }
+  if(fov != null) surfFov = Math.max(20, Math.min(110, fov));
+  return qp;
+})();
+
 // 起動時、ブラウザがリロードで復元したチェック状態に内部変数を同期する。
 // （change イベントはユーザー操作時しか発火しないため、これが無いと
 //   チェック表示と実際の動作がズレる）
@@ -1681,6 +1734,81 @@ document.getElementById('realSize').addEventListener('change', e=>applyRealSize(
   // 退出時に戻すための「直前の実スケール設定」を正しく記憶させるため）
   if(document.getElementById('surface').checked) setSurfaceMode(true);
 })();
+
+// URL の日時(t)・追従天体(focus)を適用する。設定の反映（上）が済んでから行う。
+if(urlParams){
+  // focus は天体 index。地表モード中は無効、月は実スケール表示時のみ見えるので同様に制限。
+  let focus = parseInt(urlParams.get('focus'), 10);
+  if(!(focus >= 0 && focus < N_VISIBLE) || surfaceMode
+     || (BODIES[focus].moon && !realSize)) focus = null;
+  const tMs = urlParams.has('t') ? Date.parse(urlParams.get('t')) : NaN;
+  const target = Number.isFinite(tMs) ? (tMs - EPOCH.getTime()) / 1000 : null;
+  if(target != null && Math.abs(target) <= SHARE_MAX_YEARS * YEAR){
+    toast('🔗 共有された日時へ早送り中…');
+    // 既存の早送りで目標日時まで進める（過去なら逆回し）。到達したら一時停止し、
+    // 「その瞬間の配置」を見せる。追従はカメラが飛ばないよう到達後に設定。
+    startCatchup(()=>target, ()=>{
+      running = false;
+      pauseBtn.textContent = '▶ 再生';
+      if(focus != null) setFocus(focus);
+    });
+  } else {
+    // 日時なし、または元期±SHARE_MAX_YEARS の範囲外（早送りに実時間がかかり
+    // すぎるため移動しない。設定の復元だけ行い、通知して元期から開始）。
+    if(target != null)
+      toast(`⚠ URLの日時が 元期±${SHARE_MAX_YEARS}年 の範囲外のため移動しません`, 5000);
+    if(focus != null) setFocus(focus);
+  }
+}
+
+// 共有リンクの生成。現在の日時と「既定値と異なる設定」だけをパラメータにする。
+function buildShareUrl(){
+  const qp = new URLSearchParams();
+  // 日時は分単位の UTC ISO 形式（例 2054-11-16T18:01Z）
+  const d = new Date(EPOCH.getTime() + simSeconds*1000);
+  qp.set('t', d.toISOString().slice(0,16) + 'Z');
+  if(parseFloat(speedSlider.value) !== 0) qp.set('speed', speedSlider.value);
+  for(const [id, key, def] of SHARE_TOGGLES){
+    // 実スケールは地表モード中は強制 ON（モード側で再現される）なので載せない
+    if(id === 'realSize' && surfaceMode) continue;
+    const v = document.getElementById(id).checked;
+    if(v !== def) qp.set(key, v ? '1' : '0');
+  }
+  if(focusIndex != null && !surfaceMode) qp.set('focus', focusIndex);
+  if(surfaceMode){
+    qp.set('lat', obsLatSlider.value);
+    qp.set('lon', obsLonSlider.value);
+    qp.set('yaw', (surfYaw * 180 / Math.PI).toFixed(1));
+    qp.set('pitch', (surfPitch * 180 / Math.PI).toFixed(1));
+    qp.set('fov', Math.round(surfFov));
+  }
+  if(sunMassMul !== 1) qp.set('sun', sunMassSlider.value);
+  if(gMul !== 1) qp.set('g', gMulSlider.value);
+  return location.href.split(/[?#]/)[0] + '?' + qp.toString();
+}
+function copyText(text){
+  if(navigator.clipboard && navigator.clipboard.writeText)
+    return navigator.clipboard.writeText(text);
+  // 非セキュアコンテキスト等のフォールバック
+  return new Promise((resolve, reject)=>{
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    ok ? resolve() : reject(new Error('copy failed'));
+  });
+}
+document.getElementById('shareBtn').addEventListener('click', ()=>{
+  const url = buildShareUrl();
+  // アドレスバーにも反映しておく（コピーに失敗してもそこから取れる）
+  try { history.replaceState(null, '', url); } catch(e) { /* file:// 等では不可 */ }
+  copyText(url)
+    .then(()=> toast('🔗 共有リンクをコピーしました'))
+    .catch(()=> toast('⚠ コピーできませんでした。アドレスバーのURLを使ってください', 5000));
+});
 
 window.addEventListener('resize', ()=>{
   camera.aspect = window.innerWidth/window.innerHeight;
