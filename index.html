@@ -1378,6 +1378,9 @@ function findNextEclipse(){
   const GEO_ENTER = 1.8 * Math.PI / 180;
   const LIMIT = simSeconds + 20 * YEAR; // 部分日食は同一地点でも普通数年に一度はある
   let found = null;
+  // 探索開始時にすでに新月接近ゾーン内(=日食の最中・前後)なら、まず今のゾーンを
+  // 抜けてから探す。こうしないと「次の日食へ」が今見ている日食を再び見つけてしまう。
+  while(simSeconds < LIMIT && geoSunMoonSep() < GEO_ENTER) stepPhysics(COARSE_DT);
   while(simSeconds < LIMIT){
     if(geoSunMoonSep() < GEO_ENTER){
       // ゾーン内: 細かく刻んで食の間の離角最小(=最大食)を追う
