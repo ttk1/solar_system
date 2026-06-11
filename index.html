@@ -149,8 +149,6 @@
       <label title="軌道トレイル（軌跡）を表示"><span>トレイル</span><span class="sw"><input type="checkbox" id="trails" checked><i></i></span></label>
       <label title="天体名ラベルを表示"><span>天体名</span><span class="sw"><input type="checkbox" id="labels" checked><i></i></span></label>
       <label title="星空背景を表示"><span>背景の星</span><span class="sw"><input type="checkbox" id="stars" checked><i></i></span></label>
-      <label title="88星座の星座線と星座名を表示"><span>星座線</span><span class="sw"><input type="checkbox" id="constLines"><i></i></span></label>
-      <label title="北斗七星・夏の大三角・冬のダイヤモンドなどの有名な星の並びを表示"><span>星の並び</span><span class="sw"><input type="checkbox" id="asterisms"><i></i></span></label>
       <label title="地球テクスチャを8Kに（初回は読み込みあり）"><span>高画質 8K</span><span class="sw"><input type="checkbox" id="hiRes"><i></i></span></label>
       <label title="太陽系の銀河公転をトレイルで可視化"><span>銀河公転</span><span class="sw"><input type="checkbox" id="galaxy"><i></i></span></label>
       <label title="天体を実際の半径比で描画（ほぼ点になります）"><span>実スケール</span><span class="sw"><input type="checkbox" id="realSize"><i></i></span></label>
@@ -183,8 +181,8 @@
 
   <details id="fun" open>
     <summary class="fun-title">🎲 面白機能</summary>
-    <label class="row">
-      <span>🌍 地表モード（地球から空を見上げる）</span>
+    <label class="row" title="地球の地表から空を見上げる視点に切り替え">
+      <span>🌍 地表モード <span class="small">（空を見上げる）</span></span>
       <span class="sw"><input type="checkbox" id="surface"><i></i></span>
     </label>
     <div id="surfaceNote" style="display:none;">
@@ -198,6 +196,14 @@
       <div class="small">地理座標で指定（例: 東京 35.7, 139.7）。値は OBS_LAT_DEG / OBS_LON_DEG に焼き込めます</div>
       <button id="eclipseBtn">🌑 次の日食へ早送り</button>
     </div>
+    <label class="row" title="88星座の星座線と星座名を表示">
+      <span>✨ 星座線 <span class="small">（星座名つき）</span></span>
+      <span class="sw"><input type="checkbox" id="constLines"><i></i></span>
+    </label>
+    <label class="row" title="北斗七星・夏の大三角・冬のダイヤモンドなどの有名な星の並びを表示">
+      <span>⭐ 星の並び <span class="small">（北斗七星など）</span></span>
+      <span class="sw"><input type="checkbox" id="asterisms"><i></i></span>
+    </label>
     <button id="alignBtn">🪐 次の惑星直列へ</button>
     <button id="cometBtn">☄ 彗星を発射</button>
     <label class="row" style="margin-top:6px;">
