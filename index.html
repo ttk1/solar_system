@@ -1341,7 +1341,9 @@ function observerPhysPos(outPos, outUp){
   _obsTiltQ.multiply(_obsSpinQ);
   _obsLocal.applyQuaternion(_obsTiltQ);              // シーン系の天頂方向
   outUp.set(_obsLocal.x, -_obsLocal.z, _obsLocal.y); // シーン→物理座標系の逆写像
-  outPos.copy(state[earthIndex].p).addScaledVector(outUp, R_EARTH_M);
+  // 高さは描画カメラと同じ OBS_EYE(=1.02R)。地表ちょうど(1.00R)で判定すると、
+  // 視点高度~127kmぶんの月の視差(~0.019°)で最大食の時刻が数分ずれて見える。
+  outPos.copy(state[earthIndex].p).addScaledVector(outUp, R_EARTH_M * OBS_EYE);
 }
 
 const _ecO = new THREE.Vector3(), _ecUp = new THREE.Vector3();
@@ -1383,14 +1385,33 @@ function findNextEclipse(){
   while(simSeconds < LIMIT && geoSunMoonSep() < GEO_ENTER) stepPhysics(COARSE_DT);
   while(simSeconds < LIMIT){
     if(geoSunMoonSep() < GEO_ENTER){
-      // ゾーン内: 細かく刻んで食の間の離角最小(=最大食)を追う
-      let best = null;
+      // ゾーン内: 細かく刻んで食の間の離角最小(=最大食)を追う。
+      // 最小点の前後の離角も記録し、後で放物線補間に使う。
+      let best = null, prevSep = Infinity, capture = null;
       while(simSeconds < LIMIT && geoSunMoonSep() < GEO_ENTER){
         stepPhysics(FINE_DT);
         const e = topoEclipseInfo();
-        if(e.eclipse && (!best || e.sep < best.sep)) best = { t: simSeconds, sep: e.sep };
+        if(capture){ capture.sNext = e.sep; capture = null; } // best 直後の点
+        if(e.eclipse && (!best || e.sep < best.sep)){
+          best = { t: simSeconds, sep: e.sep, sPrev: prevSep, sNext: undefined };
+          capture = best;
+        }
+        prevSep = e.sep;
       }
-      if(best){ found = best; break; }
+      if(best){
+        // サブグリッド補間: 最大食付近では太陽-月の相対運動はほぼ等速なので
+        // sep²(t) は2次式。グリッド3点(前・最小・後)の放物線の頂点で時刻を精密化し、
+        // FINE_DT(2分)刻みの量子化誤差(±1分)を消す。
+        if(best.sPrev < Infinity && best.sNext !== undefined){
+          const a0 = best.sPrev*best.sPrev, a1 = best.sep*best.sep, a2 = best.sNext*best.sNext;
+          const den = a0 - 2*a1 + a2;
+          if(den > 0){
+            const off = Math.max(-FINE_DT, Math.min(FINE_DT, 0.5 * FINE_DT * (a0 - a2) / den));
+            best.t += off;
+          }
+        }
+        found = best; break;
+      }
     } else {
       stepPhysics(COARSE_DT);
     }
