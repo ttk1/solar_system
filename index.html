@@ -74,6 +74,8 @@
   .presets { display:flex; gap:4px; margin-top:2px; }
   .presets button { flex:1; padding:2px 0; font-size:11px; }
   .presets button.active { background:#3d5ba9; border-color:#6e9bff; color:#fff; }
+  /* 逆再生中のハイライト */
+  #rev.active { background:#3d5ba9; border-color:#6e9bff; color:#fff; }
   /* 表示トグル: 2列グリッド + スイッチ */
   #ui .tgl-grid { display:grid; grid-template-columns:1fr 1fr; gap:2px 14px; }
   #ui .tgl-grid label { display:flex; justify-content:space-between; align-items:center; cursor:pointer; margin:0; padding:2px 0; }
@@ -124,6 +126,7 @@
   <div class="sec">
     <div class="sec-title">時間</div>
     <div class="row">
+      <button id="rev" title="逆再生（時間を巻き戻す）">◀</button>
       <button id="pause" style="flex:1;">⏸ 一時停止</button>
       <button id="reset" title="初期状態(2000年元期)に戻す">↺ リセット</button>
     </div>
@@ -377,6 +380,7 @@ initState();
 const EPOCH = new Date(Date.UTC(2000,0,1,0,0,0)); // 元期 2000-01-01 00:00 TDB (≈UTC), JD 2451544.5
 let simSeconds = 0;          // 経過シミュレーション秒
 let running = true;
+let timeDir = 1;             // 再生方向: 1=順方向, -1=逆再生（積分は時間対称なので逆回しも同精度）
 let yearsPerSecond = 1.0;    // 実時間1秒あたりのシミュレーション年数
 let showTrails = true;
 let showLabels = true;       // 天体名ラベルの表示
@@ -1209,9 +1213,22 @@ uiToggle.addEventListener('click', ()=> setUiCollapsed(!uiEl.classList.contains(
 if (window.matchMedia('(max-width: 600px)').matches) setUiCollapsed(true);
 
 const pauseBtn = document.getElementById('pause');
+const revBtn = document.getElementById('rev');
+// 再生状態の表示をまとめて更新（▶/⏸ の切替と逆再生ボタンのハイライト）
+function updatePlayButtons(){
+  pauseBtn.textContent = (running && timeDir === 1) ? '⏸ 一時停止' : '▶ 再生';
+  revBtn.classList.toggle('active', running && timeDir === -1);
+}
 pauseBtn.addEventListener('click', ()=>{
-  running = !running;
-  pauseBtn.textContent = running ? '⏸ 一時停止' : '▶ 再生';
+  // ボタンの表示どおりに動く: ⏸(順再生中)なら一時停止、▶(停止中・逆再生中)なら順方向で再生
+  if(running && timeDir === 1){ running = false; }
+  else { running = true; timeDir = 1; }
+  updatePlayButtons();
+});
+revBtn.addEventListener('click', ()=>{
+  if(running && timeDir === -1){ running = false; }       // 逆再生中なら一時停止
+  else { running = true; timeDir = -1; catchup = null; }  // 早送り中でも即座に逆再生へ
+  updatePlayButtons();
 });
 
 // キーボードショートカット: Space=一時停止/再生、Esc=追従解除（地表モード中は終了）。
@@ -1248,6 +1265,9 @@ document.getElementById('reset').addEventListener('click', ()=>{
   // カメラも既定ビューへ。天体は元期の位置へ飛ぶので、ズームしたままだと
   // 虚空を見続けることになる（地表モード中はカメラを観測者が握るため不要）。
   if(!surfaceMode) resetView();
+  // 共有リンクのパラメータが残っているとリロードで共有状態が再適用されるので消す
+  if(location.search)
+    try { history.replaceState(null, '', location.pathname); } catch(e) { /* file:// 等では不可 */ }
 });
 
 // 指定の日時(UTC)に対応するシミュレーション秒
@@ -1264,7 +1284,8 @@ function startCatchup(target, onArrive){
   clearTrails();
   catchup = { target, onArrive };
   running = true;
-  pauseBtn.textContent = '⏸ 一時停止';
+  timeDir = 1; // 早送りの方向は catchup が残距離の符号で決める。到達後の再生は順方向へ
+  updatePlayButtons();
 }
 const nowBtn = document.getElementById('now');
 nowBtn.addEventListener('click', ()=>{
@@ -1283,7 +1304,7 @@ gotoBtn.addEventListener('click', ()=>{
   if(!gotoDate.value) return; // 未入力
   const [y,m,d] = gotoDate.value.split('-').map(Number);
   const targetT = dateToSimSeconds(new Date(Date.UTC(y, m-1, d, 12, 0, 0)));
-  startCatchup(()=>targetT, ()=>{ running = false; pauseBtn.textContent = '▶ 再生'; });
+  startCatchup(()=>targetT, ()=>{ running = false; updatePlayButtons(); });
 });
 // 日付入力で Enter を押したら移動（ボタンクリックと同じ）
 gotoDate.addEventListener('keydown', e=>{ if(e.key === 'Enter') gotoBtn.click(); });
@@ -1371,7 +1392,7 @@ alignBtn.addEventListener('click', ()=>{
       return;
     }
     startCatchup(()=>targetT, ()=>{
-      running = false; pauseBtn.textContent = '▶ 再生'; // 直列の瞬間で一時停止
+      running = false; updatePlayButtons(); // 直列の瞬間で一時停止
       const d = new Date(EPOCH.getTime() + targetT*1000);
       const deg = Math.round(alignmentSpread() * 180 / Math.PI);
       // 到達時に実際の集まり角度を再確認。閾値を明確に超えていたら、探索時と
@@ -1528,7 +1549,7 @@ eclipseBtn.addEventListener('click', ()=>{
     eclipseBtn.textContent = ECLIPSE_BTN_LABEL;
     if(!found){ toast('🌑 今後20年では、この地点から見える日食が見つかりません'); return; }
     startCatchup(()=>found.t, ()=>{
-      running = false; pauseBtn.textContent = '▶ 再生'; // 最大食の瞬間で一時停止
+      running = false; updatePlayButtons(); // 最大食の瞬間で一時停止
       pointSurfaceCameraAtSun();
       const e = topoEclipseInfo(); // 到達時の実際の配置で食の種類を判定
       const kind = e.sep <= e.thM - e.thS ? '皆既日食'
@@ -1749,7 +1770,7 @@ if(urlParams){
     // 「その瞬間の配置」を見せる。追従はカメラが飛ばないよう到達後に設定。
     startCatchup(()=>target, ()=>{
       running = false;
-      pauseBtn.textContent = '▶ 再生';
+      updatePlayButtons();
       if(focus != null) setFocus(focus);
     });
   } else {
@@ -2127,7 +2148,7 @@ function animate(){
         if(Math.abs(simAdvance) >= absRem){ arriveCb = catchup.onArrive; catchup = null; }
       }
     } else {
-      simAdvance = realDt * yearsPerSecond * YEAR;
+      simAdvance = realDt * yearsPerSecond * YEAR * timeDir; // 逆再生なら負方向へ
     }
     // PHYS_DT(0.05日)は1ステップの上限。遅いときは可変dtで滑らかに（等倍まで対応）、
     // 速いときは PHYS_DT 刻みに分割しつつ1フレーム最大10000ステップでクランプ。
